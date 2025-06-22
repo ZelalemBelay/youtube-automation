@@ -16,10 +16,10 @@ jobs:
       - name: Build Docker image
         run: docker build -t yt-upload .
 
-      - name: Run video generation and upload
+      - name: Run container and upload
         run: |
           docker run \
-            -e YT_CLIENT_ID=${{ secrets.YT_CLIENT_ID }} \
-            -e YT_CLIENT_SECRET=${{ secrets.YT_CLIENT_SECRET }} \
-            -e YT_REFRESH_TOKEN=${{ secrets.YT_REFRESH_TOKEN }} \
-            yt-upload
+          -e YT_CLIENT_ID=${{ secrets.YT_CLIENT_ID }} \
+          -e YT_CLIENT_SECRET=${{ secrets.YT_CLIENT_SECRET }} \
+          -e YT_REFRESH_TOKEN=${{ secrets.YT_REFRESH_TOKEN }} \
+          yt-upload
