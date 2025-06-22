@@ -13,13 +13,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Build Docker image
-        run: docker build -t yt-upload .
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-      - name: Run container
+      - name: Install dependencies
         run: |
-          docker run \
-          -e YT_CLIENT_ID=${{ secrets.YT_CLIENT_ID }} \
-          -e YT_CLIENT_SECRET=${{ secrets.YT_CLIENT_SECRET }} \
-          -e YT_REFRESH_TOKEN=${{ secrets.YT_REFRESH_TOKEN }} \
-          yt-upload
+          python -m pip install --upgrade pip
+          pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
+
+      - name: Generate video using ffmpeg
+        run: python create_video.py
+
+      - name: Upload to YouTube
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python upload_video.py
