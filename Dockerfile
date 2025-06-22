@@ -1,20 +1,25 @@
 FROM python:3.10-slim
 
-# Install system dependencies
+# Install dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     imagemagick \
-    libmagickwand-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Fix ImageMagick security policy (allows moviepy to use TextClip)
-RUN sed -i 's/none/read|write/' /etc/ImageMagick-6/policy.xml || true
+# Fix ImageMagick security policy to allow 'TextClip'
+RUN sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml || true \
+ && sed -i 's/rights="none" pattern="PS"/rights="read|write" pattern="PS"/' /etc/ImageMagick-6/policy.xml || true \
+ && sed -i 's/rights="none" pattern="EPI"/rights="read|write" pattern="EPI"/' /etc/ImageMagick-6/policy.xml || true \
+ && sed -i 's/rights="none" pattern="XPS"/rights="read|write" pattern="XPS"/' /etc/ImageMagick-6/policy.xml || true \
+ && sed -i 's/rights="none" pattern="MVG"/rights="read|write" pattern="MVG"/' /etc/ImageMagick-6/policy.xml || true
 
-# Set workdir and copy files
+# Set working directory
 WORKDIR /app
-COPY . /app
 
-# Install Python dependencies
+# Copy all code
+COPY . .
+
+# Install Python packages
 RUN pip install --no-cache-dir \
     moviepy \
     google-auth \
@@ -22,5 +27,5 @@ RUN pip install --no-cache-dir \
     google-auth-httplib2 \
     google-api-python-client
 
-# Default command for test
+# Run script by default (optional)
 CMD ["python", "create_video.py"]
