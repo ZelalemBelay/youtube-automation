@@ -2,7 +2,7 @@ name: YouTube Auto Upload
 
 on:
   schedule:
-    - cron: '0 22 * * *'  # 5 PM CST
+    - cron: '0 22 * * *'  # 5PM CST = 11PM UTC
   workflow_dispatch:
 
 jobs:
@@ -13,9 +13,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Build Docker container and run
+      - name: Build Docker image
+        run: docker build -t yt-upload .
+
+      - name: Run video generation and upload
         run: |
-          docker build -t yt-upload .
           docker run \
             -e YT_CLIENT_ID=${{ secrets.YT_CLIENT_ID }} \
             -e YT_CLIENT_SECRET=${{ secrets.YT_CLIENT_SECRET }} \
