@@ -16,7 +16,7 @@ jobs:
       - name: Build Docker image
         run: docker build -t yt-upload .
 
-      - name: Run container and upload
+      - name: Run container
         run: |
           docker run \
           -e YT_CLIENT_ID=${{ secrets.YT_CLIENT_ID }} \
