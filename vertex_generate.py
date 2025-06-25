@@ -23,7 +23,7 @@ parameters = {
     "generateAudio": True
 }
 
-response = client.predict(endpoint=endpoint, instances=instances, parameters=parameters)
+response = client.predict(endpoint=endpoint, instances=instances, parameters=parameters, timeout=600)
 
 # Extract URL
 try:
