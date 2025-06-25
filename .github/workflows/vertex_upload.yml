@@ -1,4 +1,4 @@
-name: Flow Video AI_Vertex
+name: Vertex_upload
 
 on:
   schedule:
