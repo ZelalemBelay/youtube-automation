@@ -1,46 +1,31 @@
-name: AI Video Creator & Uploader
+name: YouTube Auto Upload
 
 on:
   schedule:
-    - cron: '0 22 * * *'
+    - cron: '0 22 * * *'  # 5PM CST = 11PM UTC
   workflow_dispatch:
 
 jobs:
-  generate_and_upload:
+  upload-video:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
-        with: 
+        with:
           python-version: '3.10'
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          pip install requests boto3 openai google-api-python-client
+          pip install requests
 
-      - name: Generate scene via Runway
+      - name: Create output folder
+        run: mkdir -p video_output
+
+      - name: Run Runway video generation
         env:
           RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
-        run: python runway_generate.py
-
-      - name: Generate voiceover via Polly
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: python tts_polly.py
-
-      - name: Merge video + audio + subtitles
-        run: python merge_and_subtitle.py
-
-      - name: Upload to YouTube
-        env:
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-        run: python upload_video.py
+        run: python runway_automation.py
