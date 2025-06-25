@@ -1,61 +1,77 @@
 import os
-from moviepy.editor import *
+import subprocess
 from gtts import gTTS
 
-# Create output folder
+# Prepare output directory
 os.makedirs("video_output", exist_ok=True)
 
-# Define conversation (hardcoded for now)
+# Define conversation
 dialogues = [
     {"speaker": "A", "text": "Hey, did you hear about the guy who fell off the first floor holding a microwave?"},
     {"speaker": "B", "text": "Yeah, I saw it. Funniest thing I’ve seen all week!"},
     {"speaker": "A", "text": "I still can't believe he saved the microwave."}
 ]
 
-# Background and character placeholders
-video_width, video_height = 1280, 720
-bg_color = (30, 30, 30)
-char_a = TextClip("🙂", fontsize=150, color="white").set_position(("left", "center"))
-char_b = TextClip("😮", fontsize=150, color="white").set_position(("right", "center"))
-
-# Generate audio clips and subtitle clips
-clips = []
-current_time = 0
-subtitle_clips = []
-
+# Generate audio clips and calculate durations
+total_duration = 0
+segments = []
 for i, line in enumerate(dialogues):
-    speaker = line["speaker"]
     text = line["text"]
-
-    # Generate TTS
     tts = gTTS(text=text)
-    tts_path = f"video_output/audio_{i}.mp3"
-    tts.save(tts_path)
+    audio_path = f"video_output/line_{i}.mp3"
+    tts.save(audio_path)
 
-    # Load audio and calculate duration
-    audio = AudioFileClip(tts_path)
-    duration = audio.duration
+    # Get audio duration using ffprobe
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    duration = float(result.stdout.strip())
+    start = total_duration
+    end = start + duration
+    segments.append({"start": start, "end": end, "text": text, "audio": audio_path})
+    total_duration = end
 
-    # Background clip
-    bg_clip = ColorClip(size=(video_width, video_height), color=bg_color, duration=duration)
-    bg_clip = bg_clip.set_audio(audio).set_start(current_time)
+# Create silent background video with subtitles
+video_path = "video_output/generated_convo.mp4"
+text_filters = []
 
-    # Character placement
-    speaker_clip = char_a if speaker == "A" else char_b
-    speaker_clip = speaker_clip.set_duration(duration).set_start(current_time)
+for i, segment in enumerate(segments):
+    escaped_text = segment["text"].replace("'", r"\'").replace(":", "\:")
+    y_pos = 600 if i % 2 == 0 else 500  # Alternate subtitle position
+    text_filters.append(
+        f"drawtext=text='{escaped_text}':"
+        f"fontcolor=white:fontsize=36:x=(w-text_w)/2:y={y_pos}:"
+        f"enable='between(t,{segment['start']},{segment['end']})'"
+    )
 
-    # Subtitle
-    subtitle = TextClip(text, fontsize=40, color="white", bg_color="black", size=(video_width - 100, None), method="caption")
-    subtitle = subtitle.set_position(("center", video_height - 100)).set_duration(duration).set_start(current_time)
+# Combine all audios
+audio_list = "video_output/audio_list.txt"
+with open(audio_list, "w") as f:
+    for seg in segments:
+        f.write(f"file '{seg['audio']}'\n")
 
-    clips.extend([bg_clip, speaker_clip])
-    subtitle_clips.append(subtitle)
+subprocess.run(
+    ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", audio_list,
+     "-c", "copy", "video_output/combined_audio.mp3"],
+    check=True
+)
 
-    current_time += duration
+# Build the full ffmpeg command
+ffmpeg_cmd = [
+    "ffmpeg",
+    "-y",
+    "-f", "lavfi",
+    "-i", f"color=c=black:s=1280x720:d={int(total_duration + 1)}",
+    "-i", "video_output/combined_audio.mp3",
+    "-vf", ",".join(text_filters),
+    "-c:v", "libx264",
+    "-c:a", "aac",
+    "-pix_fmt", "yuv420p",
+    "-shortest",
+    video_path
+]
 
-# Combine everything
-final_video = CompositeVideoClip(clips + subtitle_clips, size=(video_width, video_height))
-final_path = "video_output/generated_convo.mp4"
-final_video.write_videofile(final_path, fps=24)
-
-print("✅ Video generated:", final_path)
+subprocess.run(ffmpeg_cmd, check=True)
+print("✅ Video generated:", video_path)
