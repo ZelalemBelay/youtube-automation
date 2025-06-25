@@ -47,11 +47,11 @@ for i, segment in enumerate(segments):
     )
 
 # Combine all audios
-audio_list = "video_output/audio_list.txt"
-with open(audio_list, "w") as f:
+audio_list_path = os.path.join("video_output", "audio_list.txt")
+with open(audio_list_path, "w") as f:
     for seg in segments:
-        f.write(f"file '{seg['audio']}'\n")
-
+        f.write(f"file '{os.path.abspath(seg['audio'])}'\n")
+        
 subprocess.run(
     ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", audio_list,
      "-c", "copy", "video_output/combined_audio.mp3"],
