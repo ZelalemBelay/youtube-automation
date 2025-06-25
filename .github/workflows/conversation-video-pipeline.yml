@@ -27,7 +27,7 @@ jobs:
         run: mkdir -p video_output
 
       - name: Generate conversation video
-        run: python generate_video_conversation.py
+        run: python create_video_conversation.py
 
       - name: Upload generated video as artifact
         uses: actions/upload-artifact@v4
