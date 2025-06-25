@@ -1,5 +1,4 @@
-from google.generativeai import Client as VeoClient # Assuming Veo is part of genai client
-from google.generativeai import types as VeoTypes
+from google.cloud import aiplatform # or specific modules within aiplatform for Veo
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
