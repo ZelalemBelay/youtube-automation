@@ -18,14 +18,20 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Install dependencies
         run: |
-          pip install requests
+          python -m pip install --upgrade pip
+          pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
 
-      - name: Create output folder
-        run: mkdir -p video_output
+      - name: Generate video using ffmpeg
+        run: python create_video.py
 
-      - name: Run Runway video generation
+      - name: Upload to YouTube
         env:
-          RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
-        run: python runway_automation.py
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python upload_video.py
