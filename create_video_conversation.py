@@ -39,8 +39,12 @@ text_filters = []
 for i, seg in enumerate(segments):
     text = seg["text"].replace("'", r"\'").replace(":", r"\:")
     y = 600 if i % 2 == 0 else 500
+    
+    # Escape commas inside enable expression:
+    enable_expr = f"between(t,{seg['start']},{seg['end']})".replace(",", r"\,")
+    
     text_filters.append(
-        f"drawtext=text='{text}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y={y}:enable='between(t,{seg['start']},{seg['end']})'"
+        f"drawtext=text='{text}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y={y}:enable='{enable_expr}'"
     )
 vf_filter = ",".join(text_filters)
 
