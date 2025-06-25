@@ -8,7 +8,7 @@ creds = service_account.Credentials.from_service_account_info(KEY)
 
 project = KEY["project_id"]
 location = "us-central1"
-model = "projects/google/models/veo-3.0-generate-preview"
+model = f"projects/{project}/locations/{location}/publishers/google/models/veo-3.0-generate-preview"
 parent = f"projects/{project}/locations/{location}"
 
 # Initialize client
