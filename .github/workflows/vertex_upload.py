@@ -1,75 +1,322 @@
 import os
 import pickle
-import json # Import json for loading the config from a string
+import json
+import requests
+import time
+
+# For YouTube API
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from googleapiclient.errors import HttpError
 
-# ... (other imports and configurations) ...
+# For Vertex AI (Veo)
+# Make sure you have 'google-cloud-aiplatform' installed
+from google.cloud import aiplatform
+# You might need specific modules like:
+# from google.cloud.aiplatform.gapic.schema import predict_pb2
+# from google.cloud.aiplatform_v1.services.prediction_service import PredictionServiceClient
+# from google.protobuf.struct_pb2 import Value # For passing JSON-like structures as protobuf
+# The exact Veo interaction can vary; this uses a common GenerativeModel pattern.
+
+# --- Configuration ---
+# Vertex AI/Veo API
+# It's highly recommended to get these from GitHub Secrets or environment variables
+PROJECT_ID = os.getenv("GCP_PROJECT_ID", "youtube-auto-uploader-463700") # Replace or set via env
+LOCATION = os.getenv("GCP_LOCATION", "us-central1") # Or the region where Veo is available
+
+# The Veo model ID. This is a common pattern for Google's generative models.
+# Always verify the exact model name from Google's official Veo documentation for Vertex AI.
+VEO_MODEL_NAME = f"projects/{PROJECT_ID}/locations/{LOCATION}/publishers/google/models/veo-2.0-generate"
+# You might also need a specific endpoint if Veo is exposed that way:
+# VEO_ENDPOINT_ID = os.getenv("VEO_ENDPOINT_ID", "your-veo-prediction-endpoint-id")
+# VEO_ENDPOINT_NAME = f"projects/{PROJECT_ID}/locations/{LOCATION}/endpoints/{VEO_ENDPOINT_ID}"
+
+VIDEO_OUTPUT_DIR = "generated_videos"
 
 # YouTube API Configuration
-# CLIENT_SECRETS_FILE = "client_secrets.json" # Remove this line
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
-YOUTUBE_CATEGORY_ID = "22" # Example: People & Blogs
+YOUTUBE_CATEGORY_ID = "22" # Example: People & Blogs (adjust as needed)
 
-# Define your client secrets directly in a dictionary
-# **WARNING: DO NOT HARDCODE SENSITIVE CREDENTIALS IN PRODUCTION CODE**
-# This is for demonstration of "inline" secrets only.
-# Replace with your actual values from your client_secrets.json
-YOUTUBE_CLIENT_CONFIG = {
-    "installed": { # Or "web" if it's a Web Application type client
-        "client_id": "381781776567-eoohs8g5arqj0psg7j53tfspqb09fph7.apps.googleusercontent.com",
-        "project_id": "youtube-auto-uploader-463700", # This might not be strictly necessary for InstalledAppFlow, but good practice
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_secret": "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",
-        "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"] # Important for installed apps
-    }
-}
+# Get YouTube API credentials from environment variables (GitHub Secrets)
+CLIENT_ID = os.getenv("YT_CLIENT_ID")
+CLIENT_SECRET = os.getenv("YT_CLIENT_SECRET")
+REFRESH_TOKEN = os.getenv("YT_REFRESH_TOKEN")
+
+# --- Initialize Vertex AI SDK ---
+# This initializes the client and sets the project/location for subsequent calls.
+try:
+    aiplatform.init(project=PROJECT_ID, location=LOCATION)
+except Exception as e:
+    print(f"Failed to initialize Vertex AI: {e}")
+    print("Please ensure GCP_PROJECT_ID and GCP_LOCATION are set correctly,")
+    print("and the Vertex AI API is enabled for your project.")
+    # Exit if Vertex AI can't be initialized as Veo won't work
+    exit(1)
 
 
 def authenticate_youtube():
-    """Authenticates with YouTube Data API using OAuth 2.0."""
+    """
+    Authenticates with YouTube Data API using OAuth 2.0.
+    Prioritizes loading from token.pickle, then uses refresh token from environment,
+    or raises error if interactive flow is needed (not for CI/CD).
+    """
     creds = None
-    if os.path.exists("token.pickle"):
-        with open("token.pickle", "rb") as token:
-            creds = pickle.load(token)
+    token_pickle_path = "token.pickle"
+
+    # 1. Try to load existing credentials from token.pickle
+    if os.path.exists(token_pickle_path):
+        try:
+            with open(token_pickle_path, "rb") as token:
+                creds = pickle.load(token)
+            print("Loaded credentials from token.pickle.")
+        except Exception as e:
+            print(f"Error loading token.pickle: {e}. Will attempt to create new credentials.")
+            creds = None # Reset creds if loading fails
+
+    # 2. If no valid creds, or existing ones expired, use refresh token from environment
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # Use from_client_config instead of from_client_secrets_file
-            flow = InstalledAppFlow.from_client_config(
-                YOUTUBE_CLIENT_CONFIG, SCOPES
+            print("Existing credentials expired, attempting to refresh...")
+            try:
+                creds.refresh(Request())
+                print("Credentials refreshed successfully.")
+            except Exception as e:
+                print(f"Failed to refresh credentials: {e}. Will attempt to create new ones from refresh token.")
+                creds = None
+        
+        # If still no valid creds after refresh attempt, try to build from environment variables
+        if not creds and all([CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN]):
+            print("Creating new credentials from environment variables...")
+            try:
+                creds = Credentials(
+                    token=None,  # No initial access token needed, will be refreshed
+                    refresh_token=REFRESH_TOKEN,
+                    client_id=CLIENT_ID,
+                    client_secret=CLIENT_SECRET,
+                    token_uri="https://oauth2.googleapis.com/token",
+                    scopes=SCOPES
+                )
+                creds.refresh(Request()) # Force an immediate refresh to get an access token
+                print("Credentials created and refreshed using environment variables.")
+            except Exception as e:
+                print(f"Failed to create credentials from environment variables: {e}")
+                creds = None
+
+        # If no credentials could be obtained, it means interactive flow is needed or secrets are missing
+        if not creds:
+            raise Exception(
+                "YouTube OAuth credentials missing or invalid. "
+                "For GitHub Actions, you MUST pre-generate `token.pickle` locally "
+                "and securely provide YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, "
+                "and YOUTUBE_REFRESH_TOKEN as GitHub Secrets."
             )
-            # For GitHub Actions, you cannot run a local server or open a browser.
-            # You *must* have a pre-authorized refresh token.
-            # This part below handles the initial authorization, which needs to be done once manually.
-            # For automation, you'll skip run_local_server and directly use a stored refresh token.
-            print("Please perform initial authentication manually:")
-            auth_url, _ = flow.authorization_url(prompt='consent')
-            print(f"Please go to this URL and authorize the app: {auth_url}")
-            # This will fail in GitHub Actions unless you provide the code via input/env, which is complex.
-            # For automation, you usually pre-authorize and save the token.pickle.
-            # We'll discuss this better approach next.
-            # For now, if you are forced to run this interactively once to get a token.pickle:
-            # code = input("Enter the authorization code: ")
-            # flow.fetch_token(code=code)
-            # creds = flow.credentials
-            # print("Authentication successful. Credentials saved to token.pickle.")
 
-            # IMPORTANT: For GitHub Actions, you NEED a pre-existing token.pickle
-            # or a way to get the refresh token without user interaction.
-            # This `flow.run_local_server()` will NOT work in a CI/CD environment.
-            # You must generate `token.pickle` once locally and then securely pass
-            # the refresh token, or the entire token.pickle content, as a secret.
-            raise Exception("Initial YouTube OAuth flow requires user interaction. You must pre-generate `token.pickle` and store its refresh token securely, or use a Service Account for YouTube.")
-
-        with open("token.pickle", "wb") as token:
+    # Save the updated credentials (including new access token) to token.pickle
+    try:
+        with open(token_pickle_path, "wb") as token:
             pickle.dump(creds, token)
+        print("Credentials saved/updated in token.pickle.")
+    except Exception as e:
+        print(f"Warning: Could not save credentials to token.pickle: {e}")
+
     return build("youtube", "v3", credentials=creds)
 
-# ... (rest of your script) ...
+def generate_veo_video(prompt: str, output_path: str):
+    """Generates a video using Veo (Vertex AI) and saves it to output_path."""
+    print(f"Generating video for prompt: '{prompt}' using Vertex AI Veo...")
+
+    try:
+        # Use GenerativeModel for Veo (as per latest patterns for Google's generative models)
+        # The 'preview' namespace is crucial for pre-GA models like Veo.
+        model = aiplatform.preview.generative_models.GenerativeModel(model_name="veo-2.0-generate")
+
+        # The input structure for Veo. Refer to latest Veo API docs for exact parameters.
+        # This is based on typical generative model API structures.
+        generation_config = {
+            "aspectRatio": "16:9",
+            "durationSeconds": 8, # Max 8 seconds for single prompt in preview, check docs
+            "numberOfVideos": 1,
+            # If your Veo model supports persona generation or other features:
+            # "personGeneration": "dont_allow",
+            # "negativePrompt": "blurry, low quality"
+            # For Veo 3 with audio: "audio_description": "sound of rain"
+        }
+
+        # Make the prediction call
+        # The content can be a string or a list of parts.
+        # For simple text-to-video, a string prompt is often sufficient.
+        response = model.generate_content(
+            prompt,
+            generation_config=generation_config
+        )
+
+        # Poll for operation completion if the response is an Operation
+        # (This is typical for long-running generative tasks like video generation)
+        if hasattr(response, 'operation'):
+            print("Veo generation initiated, polling for completion...")
+            operation = response.operation # Get the operation object
+            while not operation.done(): # Check if the operation is complete
+                print("Video generation in progress... (waiting 20s)")
+                time.sleep(20) # Wait before checking again
+                operation.wait_until_done() # This method also waits and updates status
+            
+            # The actual generated video URL will be in the operation.result()
+            # The structure of operation.result() for Veo can vary.
+            # You will need to inspect this object after a successful test run.
+            # Based on common patterns, it's often in a 'generated_videos' list.
+            generated_video_uri = None
+            if hasattr(operation.result(), 'generated_videos') and operation.result().generated_videos:
+                generated_video_uri = operation.result().generated_videos[0].uri
+            elif hasattr(operation.result(), 'video_uri'): # Another possibility
+                generated_video_uri = operation.result().video_uri
+            
+            if not generated_video_uri:
+                raise ValueError("Could not find video URI in Veo response operation result.")
+            
+            generated_video_url = generated_video_uri # Assume URI is directly downloadable URL
+
+        else: # If it's a direct response (less common for video generation)
+            # This part is highly speculative and depends entirely on Veo's direct response format.
+            # It's more likely to be an operation that needs polling.
+            generated_video_url = None
+            if hasattr(response, 'candidates') and response.candidates:
+                for candidate in response.candidates:
+                    if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                        for part in candidate.content.parts:
+                            if hasattr(part, 'file_data') and hasattr(part.file_data, 'file_uri'):
+                                generated_video_url = part.file_data.file_uri
+                                break
+                            elif hasattr(part, 'video_uri'):
+                                generated_video_url = part.video_uri
+                                break
+                    if generated_video_url:
+                        break
+            if not generated_video_url:
+                raise ValueError("Could not find video URL in direct Veo response.")
+
+        print(f"Video generated! Downloading from: {generated_video_url}")
+
+        # Download the video
+        download_response = requests.get(generated_video_url, stream=True)
+        download_response.raise_for_status() # Raise an exception for HTTP errors
+        with open(output_path, 'wb') as f:
+            for chunk in download_response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print(f"Video downloaded to: {output_path}")
+        return output_path
+
+    except Exception as e:
+        print(f"Error during Veo video generation for prompt '{prompt}': {e}")
+        # Add more specific error handling based on Vertex AI exceptions
+        raise # Re-raise to stop the pipeline if generation fails
+
+def upload_youtube_video(youtube_service, video_path: str, title: str, description: str, tags: list, privacy_status: str):
+    """Uploads a video to YouTube."""
+    print(f"Uploading video '{title}' to YouTube...")
+    try:
+        body = dict(
+            snippet=dict(
+                title=title,
+                description=description,
+                tags=tags,
+                categoryId=YOUTUBE_CATEGORY_ID
+            ),
+            status=dict(
+                privacyStatus=privacy_status
+            )
+        )
+
+        # For large files, resumable upload is key. chunksize=-1 attempts to upload in one go.
+        # For very large files, a specific chunksize (e.g., 1024*1024) is better.
+        media_body = MediaFileUpload(video_path, chunksize=-1, resumable=True)
+
+        request = youtube_service.videos().insert(
+            part="snippet,status",
+            body=body,
+            media_body=media_body
+        )
+
+        response = None
+        # This loop handles the actual upload and progress reporting
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                print(f"Uploaded {int(status.progress() * 100)}%")
+
+        video_id = response.get('id')
+        youtube_url = f"https://www.youtube.com/watch?v={video_id}" # Correct YouTube URL format
+
+        print(f"Video uploaded! Video ID: {video_id}")
+        print(f"YouTube URL: {youtube_url}")
+        return video_id
+
+    except HttpError as e:
+        print(f"An HTTP error {e.resp.status} occurred during YouTube upload:\n{e.content}")
+        raise # Re-raise to propagate the error
+    except Exception as e:
+        print(f"An unexpected error occurred during YouTube upload: {e}")
+        raise # Re-raise to propagate the error
+
+if __name__ == "__main__":
+    os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)
+
+    # --- Main Workflow ---
+    prompts = [
+        "A cinematic shot of a bustling futuristic city at sunset with flying cars.",
+        "A playful animated squirrel collecting nuts in a whimsical forest.",
+        "A serene nature scene with a waterfall and lush greenery.",
+    ]
+
+    # Authenticate YouTube API
+    try:
+        youtube = authenticate_youtube()
+        print("YouTube API authenticated.")
+    except Exception as e:
+        print(f"Failed to authenticate YouTube API: {e}")
+        exit(1) # Exit if YouTube authentication fails
+
+    for i, prompt in enumerate(prompts):
+        video_filename = f"veo_video_{i+1}.mp4"
+        video_filepath = os.path.join(VIDEO_OUTPUT_DIR, video_filename)
+
+        print(f"\n--- Processing video {i+1} for prompt: '{prompt}' ---")
+        try:
+            # Generate video using Veo
+            generated_video_path = generate_veo_video(prompt, video_filepath)
+
+            # Generate dynamic title, description, tags
+            video_title = f"AI Generated Video: {prompt[:70]}..." # Truncate for title length
+            if len(prompt) > 70:
+                video_description = f"This video was generated using Google Veo (Vertex AI) from the prompt: '{prompt}'.\n\n#AIvideo #Veo #TextToVideo #Automation #GoogleAI #VertexAI"
+            else:
+                 video_description = f"This video was generated using Google Veo (Vertex AI) from the prompt: '{prompt}'. #AIvideo #Veo #TextToVideo #Automation #GoogleAI #VertexAI"
+
+            video_tags = ["AI video", "Veo", "Text to Video", "Automation", "Google AI", "Vertex AI"]
+            # Add more specific tags based on the prompt content if possible
+            video_tags.extend(prompt.lower().split()[:5]) # Add first 5 words of prompt as tags
+
+            # Upload to YouTube
+            youtube_video_id = upload_youtube_video(
+                youtube,
+                generated_video_path,
+                video_title,
+                video_description,
+                video_tags,
+                "unlisted" # Set to "public" after thorough testing!
+            )
+            print(f"Successfully processed video {i+1}. YouTube ID: {youtube_video_id}")
+
+            # Optional: Clean up local video file after successful upload
+            # os.remove(generated_video_path)
+            # print(f"Cleaned up local file: {generated_video_path}")
+
+        except Exception as e:
+            print(f"A critical error occurred during processing for prompt '{prompt}': {e}")
+            # Continue to next video or exit, depending on your desired behavior
+            # For a critical pipeline, you might want to exit here:
+            # exit(1)
+
+    print("\n--- Workflow complete ---")
