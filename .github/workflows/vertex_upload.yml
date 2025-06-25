@@ -26,5 +26,9 @@ jobs:
       env:
         # Add any environment variables your script needs, e.g., for API keys
         VEO_API_KEY: ${{ secrets.GCP_SA_KEY }}
+        # YouTube API Credentials (from GitHub Secrets)
+        YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+        YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+        YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         # YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }} # If you pass client secrets as env vars
         # Make sure client_secrets.json and token.pickle are handled securely if not env vars
