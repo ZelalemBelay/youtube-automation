@@ -1,37 +1,42 @@
-from google.cloud import aiplatform
 from google.oauth2 import service_account
+from google.cloud import aiplatform_v1beta1
 import os, json, time
 
+# Load credentials from GitHub Secret
 KEY = json.loads(os.getenv("GCP_SA_KEY"))
 creds = service_account.Credentials.from_service_account_info(KEY)
 
-client = aiplatform.gapic.GenerativeServiceClient(credentials=creds)
-
 project = KEY["project_id"]
 location = "us-central1"
+model = "projects/google/models/veo-3.0-generate-preview"
 parent = f"projects/{project}/locations/{location}"
 
-prompt_text = "Funny video man falling from first floor building holding a microwave"
+# Initialize client
+client = aiplatform_v1beta1.PredictionServiceClient(credentials=creds)
 
-request = {
-    "model": "projects/google/models/veo-3.0-generate-preview",
-    "prompt": {"text": prompt_text},
-    "generation_config": {
-        "duration_seconds": 8,
-        "aspect_ratio": "16:9",
-        "generate_audio": True
-    },
-    "parent": parent
+prompt = "Funny video man falling from first floor building holding a microwave"
+
+# Set up instance and parameters
+instances = [{"prompt": prompt}]
+parameters = {
+    "durationSeconds": 8,
+    "aspectRatio": "16:9",
+    "generateAudio": True
 }
 
-operation = client.generate_content(request=request)
+endpoint = f"https://{location}-aiplatform.googleapis.com/v1beta1/{model}:predict"
 
-print("Waiting for video to finish rendering...")
-result = operation.result(timeout=300)  # wait max 5 mins
+# Call the prediction endpoint
+response = client.predict(
+    endpoint=endpoint,
+    instances=instances,
+    parameters=parameters
+)
 
-video_url = result.generations[0].video.uri
-print("Generated video URL:", video_url)
+# Extract and store the video URL
+video_uri = response.predictions[0]["videoUri"]
 
+print("Generated video URI:", video_uri)
 os.makedirs("video_output", exist_ok=True)
 with open("video_output/video_uri.txt", "w") as f:
-    f.write(video_url)
+    f.write(video_uri)
