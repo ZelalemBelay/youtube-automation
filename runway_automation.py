@@ -16,7 +16,7 @@ data = {
     "max_duration": 10
 }
 
-response = requests.post("https://api.runwayml.com/v1/generate", headers=headers, json=data)
+response = requests.post("https://api.runwayml.com/v1/generations", headers=headers, json=data)
 response.raise_for_status()
 
 job_id = response.json()['id']
