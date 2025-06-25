@@ -53,7 +53,7 @@ with open(audio_list_path, "w") as f:
         f.write(f"file '{os.path.abspath(seg['audio'])}'\n")
         
 subprocess.run(
-    ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", audio_list,
+    ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", audio_list_path,
      "-c", "copy", "video_output/combined_audio.mp3"],
     check=True
 )
