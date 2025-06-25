@@ -1,4 +1,4 @@
-from google.cloud import aiplatform_v1beta1
+from google.cloud import aiplatform
 from google.oauth2 import service_account
 import os, json, time
 
