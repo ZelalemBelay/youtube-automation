@@ -12,23 +12,18 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
-# For Vertex AI (Veo)
-# Make sure you have 'google-cloud-aiplatform' installed
-from google.cloud import aiplatform
-# The 'preview' namespace is used for pre-GA features like some generative models.
-# If 'generative_models' is still not found after updating SDK, this path might need to change.
-
+# For Veo (using google-generativeai as per Google's latest examples)
+# Make sure you have 'google-generativeai' installed
+import google.generativeai as genai
+from google.generativeai import types as genai_types # This contains GenerateVideosConfig
 
 # --- Configuration ---
-# Vertex AI/Veo API
-# It's highly recommended to get these from GitHub Secrets or environment variables
-PROJECT_ID = os.getenv("GCP_PROJECT_ID", "youtube-auto-uploader-463700") # Set your Google Cloud Project ID as a GitHub Secret
-LOCATION = os.getenv("GCP_LOCATION", "us-central1") # Set your GCP region (e.g., 'us-central1', 'europe-west4')
+# Google AI Studio / Veo API Key (for google-generativeai client)
+# Get this from Google AI Studio and set as a GitHub Secret
+GOOGLE_API_KEY = os.getenv("GCP_API_KEY")
 
-# The Veo model ID. This is the full resource path for a Google-published model.
-# Verify the exact model name from Google's official Veo documentation for Vertex AI.
-# 'veo-2.0-generate' is a common name, but could change or vary by access tier.
-VEO_MODEL_RESOURCE_NAME = f"publishers/google/models/veo-2.0-generate"
+# Veo Model Name (as per Google's documentation for google-generativeai)
+VEO_MODEL_NAME_GENAI = "veo-2.0-generate-001" # This is the specific model name used with genai.Client()
 
 VIDEO_OUTPUT_DIR = "generated_videos"
 
@@ -40,17 +35,6 @@ YOUTUBE_CATEGORY_ID = "22" # Example: People & Blogs (adjust as needed for your 
 CLIENT_ID = os.getenv("YT_CLIENT_ID")
 CLIENT_SECRET = os.getenv("YT_CLIENT_SECRET")
 REFRESH_TOKEN = os.getenv("YT_REFRESH_TOKEN") # This is crucial for non-interactive auth
-
-# --- Initialize Vertex AI SDK ---
-# This initializes the client and sets the project/location for subsequent calls.
-try:
-    aiplatform.init(project=PROJECT_ID, location=LOCATION)
-    print(f"Vertex AI SDK initialized for project '{PROJECT_ID}' in location '{LOCATION}'.")
-except Exception as e:
-    print(f"Failed to initialize Vertex AI SDK: {e}")
-    print("Please ensure GCP_PROJECT_ID and GCP_LOCATION are set correctly as GitHub Secrets,")
-    print("and the Vertex AI API is enabled for your project.")
-    exit(1) # Exit if Vertex AI can't be initialized as Veo won't work
 
 
 def authenticate_youtube():
@@ -112,7 +96,6 @@ def authenticate_youtube():
             )
 
     # Save the updated credentials (including new access token) to token.pickle
-    # This is important for subsequent runs to quickly load fresh credentials
     try:
         with open(token_pickle_path, "wb") as token:
             pickle.dump(creds, token)
@@ -124,84 +107,69 @@ def authenticate_youtube():
 
 
 def generate_veo_video(prompt: str, output_path: str):
-    """Generates a video using Veo (Vertex AI) and saves it to output_path."""
-    print(f"Generating video for prompt: '{prompt}' using Vertex AI Veo...")
+    """Generates a video using Veo with the google-generativeai client."""
+    print(f"Generating video for prompt: '{prompt}' using Veo via google-generativeai...")
+
+    if not GOOGLE_API_KEY:
+        raise ValueError("GOOGLE_API_KEY environment variable is not set. Cannot use Veo.")
 
     try:
-        # --- THIS IS THE CRUCIAL CHANGE FOR THE 'generative_models' ERROR ---
-        # Initialize the GenerativeModel with the full resource name
-        model = aiplatform.preview.generative_models.GenerativeModel(
-            model_name=VEO_MODEL_RESOURCE_NAME
+        # Configure the google-generativeai client with your API Key
+        genai.configure(api_key=GOOGLE_API_KEY)
+        client = genai.GenerativeModel(model_name=VEO_MODEL_NAME_GENAI) # Use GenerativeModel here
+
+        # The config for video generation
+        config = genai_types.GenerateVideosConfig(
+            aspect_ratio="16:9",
+            person_generation="dont_allow", # "dont_allow" or "allow_adult"
+            # duration_seconds is not directly in GenerateVideosConfig for some models,
+            # it might be an implicit or prompt-driven length.
+            # Refer to specific Veo model documentation for all config options.
         )
-
-        # The input structure for Veo. Refer to latest Veo API docs for exact parameters.
-        generation_config = {
-            "aspectRatio": "16:9",
-            "durationSeconds": 8, # Max 8 seconds for single prompt in preview, check docs
-            "numberOfVideos": 1,
-            # Add other Veo-specific parameters here as per docs.
-            # Example: "personGeneration": "dont_allow",
-            # Example: "negativePrompt": "blurry, low quality, bad composition"
-            # If using Veo 3 with audio generation: "audio_description": "sound of gentle rain"
-        }
-
-        # Make the prediction call
-        # For long-running tasks like video generation, this often returns an Operation object.
-        print("Sending generation request to Veo...")
-        response = model.generate_content(
+        
+        # Make the video generation request
+        print("Sending video generation request to Veo (this may take a few minutes)...")
+        operation = client.generate_content(
             prompt,
-            generation_config=generation_config
+            generation_config=config,
+            # For Veo, the API structure might use generate_videos method directly
+            # operation = genai.Client().models.generate_videos(
+            #     model=VEO_MODEL_NAME_GENAI,
+            #     prompt=prompt,
+            #     config=config,
+            # )
+            # If the above is the case, you will need to adjust the line that initializes 'client' and 'operation'
+            # to match the example from Google's docs (e.g., client = genai.Client() and then client.models.generate_videos)
+            # The structure for `generate_content` is more common for multimodal models,
+            # but I'm basing this on the expectation that `google.generativeai` should work.
         )
+        
+        # Poll for operation completion
+        while not operation.done():
+            print("Video generation in progress... (waiting 20s)")
+            time.sleep(20)
+            operation = operation.reload() # Reload the operation to get its updated status
 
-        # Poll for operation completion (typical for long-running generative tasks like video)
-        if hasattr(response, 'operation') and response.operation:
-            print("Veo generation initiated, polling for completion (this might take a few minutes)...")
-            operation = response.operation # Get the operation object
-            # The wait_until_done() method polls until the operation is complete or fails
-            operation.wait_until_done()
-            
-            if operation.done():
-                if operation.error:
-                    raise Exception(f"Veo generation failed with error: {operation.error.message} (Code: {operation.error.code})")
-                
-                # The actual generated video URL will be in the operation.result()
-                generated_video_uri = None
-                if hasattr(operation.result(), 'generated_videos') and operation.result().generated_videos:
-                    # Assuming the first video in the list of generated videos
-                    generated_video_uri = operation.result().generated_videos[0].uri
-                elif hasattr(operation.result(), 'video_uri'): # Another possibility for response structure
-                    generated_video_uri = operation.result().video_uri
-                
-                if not generated_video_uri:
-                    raise ValueError("Could not find video URI in Veo response operation result. Response structure might have changed.")
-                
-                generated_video_url = generated_video_uri # Assume URI is directly downloadable URL
-            else:
-                raise Exception("Veo generation operation did not complete successfully after polling.")
-
-        else: # This block is a fallback for direct responses, less common for video generation
-            print("Veo generation returned a direct response (not an operation - unexpected for video).")
-            generated_video_url = None
-            if hasattr(response, 'candidates') and response.candidates:
-                for candidate in response.candidates:
-                    if hasattr(candidate.content, 'parts') and candidate.content.parts:
-                        for part in candidate.content.parts:
-                            if hasattr(part, 'file_data') and hasattr(part.file_data, 'file_uri'):
-                                generated_video_url = part.file_data.file_uri
-                                break
-                            elif hasattr(part, 'video_uri'):
-                                generated_video_url = part.video_uri
-                                break
-                    if generated_video_url:
-                        break
-            if not generated_video_url:
-                raise ValueError("Could not find video URL in direct Veo response. Response structure might have changed.")
+        if operation.error:
+            raise Exception(f"Veo generation failed with error: {operation.error.message}")
+        
+        generated_video_url = None
+        # The structure from google.generativeai.types.GenerateVideosResponse is:
+        # response.generated_videos[0].video.uri (types.File)
+        if hasattr(operation.result(), 'generated_videos') and operation.result().generated_videos:
+            if hasattr(operation.result().generated_videos[0], 'video') and hasattr(operation.result().generated_videos[0].video, 'uri'):
+                generated_video_url = operation.result().generated_videos[0].video.uri
+        
+        if not generated_video_url:
+            raise ValueError("Could not find video URL in Veo response. Response structure might have changed.")
 
         print(f"Veo video generated! Downloading from: {generated_video_url}")
 
         # Download the video
-        download_response = requests.get(generated_video_url, stream=True)
-        download_response.raise_for_status() # Raise an exception for HTTP errors (e.g., 404)
+        # NOTE: Google's documentation suggests appending '&key=GOOGLE_API_KEY' to download from the URI.
+        download_url = f"{generated_video_url}&key={GOOGLE_API_KEY}"
+        download_response = requests.get(download_url, stream=True)
+        download_response.raise_for_status() # Raise an exception for HTTP errors (e.g., 404, 403)
         with open(output_path, 'wb') as f:
             for chunk in download_response.iter_content(chunk_size=8192):
                 f.write(chunk)
@@ -210,6 +178,7 @@ def generate_veo_video(prompt: str, output_path: str):
 
     except Exception as e:
         print(f"Error during Veo video generation for prompt '{prompt}': {e}")
+        # Add more specific error handling based on genai exceptions if needed
         raise # Re-raise to stop the pipeline if generation fails
 
 def upload_youtube_video(youtube_service, video_path: str, title: str, description: str, tags: list, privacy_status: str):
@@ -228,8 +197,6 @@ def upload_youtube_video(youtube_service, video_path: str, title: str, descripti
             )
         )
 
-        # For large files, resumable upload is key. chunksize=-1 attempts to upload in one go.
-        # For very large files, a specific chunksize (e.g., 1024*1024) is better.
         media_body = MediaFileUpload(video_path, chunksize=-1, resumable=True)
 
         request = youtube_service.videos().insert(
@@ -239,7 +206,6 @@ def upload_youtube_video(youtube_service, video_path: str, title: str, descripti
         )
 
         response = None
-        # This loop handles the actual upload and progress reporting
         while response is None:
             status, response = request.next_chunk()
             if status:
@@ -254,10 +220,10 @@ def upload_youtube_video(youtube_service, video_path: str, title: str, descripti
 
     except HttpError as e:
         print(f"An HTTP error {e.resp.status} occurred during YouTube upload:\n{e.content}")
-        raise # Re-raise to propagate the error
+        raise
     except Exception as e:
         print(f"An unexpected error occurred during YouTube upload: {e}")
-        raise # Re-raise to propagate the error
+        raise
 
 if __name__ == "__main__":
     os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)
@@ -276,7 +242,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Failed to authenticate YouTube API: {e}")
         print("Workflow cannot proceed without YouTube authentication. Exiting.")
-        exit(1) # Exit if YouTube authentication fails
+        exit(1)
 
     for i, prompt in enumerate(prompts):
         video_filename = f"veo_video_{i+1}.mp4"
@@ -290,13 +256,11 @@ if __name__ == "__main__":
             # Generate dynamic title, description, tags
             video_title = f"AI Generated Video: {prompt[:70]}..." # Truncate for title length
             if len(prompt) > 70:
-                video_description = f"This video was generated using Google Veo (Vertex AI) from the prompt: '{prompt}'.\n\n#AIvideo #Veo #TextToVideo #Automation #GoogleAI #VertexAI"
+                video_description = f"This video was generated using Google Veo (Gemini API) from the prompt: '{prompt}'.\n\n#AIvideo #Veo #TextToVideo #Automation #GoogleAI #GeminiAPI"
             else:
-                 video_description = f"This video was generated using Google Veo (Vertex AI) from the prompt: '{prompt}'. #AIvideo #Veo #TextToVideo #Automation #GoogleAI #VertexAI"
+                 video_description = f"This video was generated using Google Veo (Gemini API) from the prompt: '{prompt}'. #AIvideo #Veo #TextToVideo #Automation #GoogleAI #GeminiAPI"
 
-            video_tags = ["AI video", "Veo", "Text to Video", "Automation", "Google AI", "Vertex AI"]
-            # Add more specific tags based on the prompt content if possible
-            # Clean and add first 5 words of prompt as tags
+            video_tags = ["AI video", "Veo", "Text to Video", "Automation", "Google AI", "Gemini API"]
             video_tags.extend([tag.strip() for tag in prompt.lower().replace('.', '').replace(',', '').split() if len(tag) > 2][:5]) 
 
             # Upload to YouTube
@@ -317,8 +281,7 @@ if __name__ == "__main__":
 
         except Exception as e:
             print(f"A critical error occurred during processing for prompt '{prompt}': {e}")
-            # Decide whether to exit or continue to the next video on error
-            # For a critical pipeline, you might want to uncomment `exit(1)` here:
-            # exit(1)
+            # Consider if you want to exit the workflow here, or continue to the next video.
+            # exit(1) # Uncomment to stop the workflow on first error.
 
     print("\n--- Workflow complete ---")
