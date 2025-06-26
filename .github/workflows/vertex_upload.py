@@ -15,7 +15,10 @@ from googleapiclient.errors import HttpError
 # For Veo (using google-generativeai as per Google's latest examples)
 # Make sure you have 'google-generativeai' installed
 import google.generativeai as genai
-from google.generativeai import types as genai_types # This contains GenerateVideosConfig
+# We no longer explicitly import GenerateVideosConfig from types,
+# as it seems to be causing issues with your installed version.
+# from google.generativeai import types as genai_types # Removed or commented out
+
 
 # --- Configuration ---
 # Google AI Studio / Veo API Key (for google-generativeai client)
@@ -116,39 +119,33 @@ def generate_veo_video(prompt: str, output_path: str):
     try:
         # Configure the google-generativeai client with your API Key
         genai.configure(api_key=GOOGLE_API_KEY)
-        client = genai.GenerativeModel(model_name=VEO_MODEL_NAME_GENAI) # Use GenerativeModel here
+        client = genai.Client() # Initialize the base client
 
-        # The config for video generation
-        config = genai_types.GenerateVideosConfig(
-            aspect_ratio="16:9",
-            person_generation="dont_allow", # "dont_allow" or "allow_adult"
-            # duration_seconds is not directly in GenerateVideosConfig for some models,
-            # it might be an implicit or prompt-driven length.
-            # Refer to specific Veo model documentation for all config options.
-        )
+        # The config for video generation as a dictionary
+        # This is the change to address 'has no attribute GenerateVideosConfig'
+        config_dict = {
+            "aspect_ratio": "16:9",
+            "person_generation": "dont_allow", # "dont_allow" or "allow_adult" or "allow_all"
+            "number_of_videos": 1, # Veo 2 typically allows 1 or 2
+            "duration_seconds": 8, # Veo 2 typically 5-8 seconds
+            # "negative_prompt": "blurry, low quality, bad composition", # Optional
+            # "audio_description": "sound of rain", # For Veo 3 if available and applicable
+        }
         
-        # Make the video generation request
+        # Make the video generation request using models.generate_videos
         print("Sending video generation request to Veo (this may take a few minutes)...")
-        operation = client.generate_content(
-            prompt,
-            generation_config=config,
-            # For Veo, the API structure might use generate_videos method directly
-            # operation = genai.Client().models.generate_videos(
-            #     model=VEO_MODEL_NAME_GENAI,
-            #     prompt=prompt,
-            #     config=config,
-            # )
-            # If the above is the case, you will need to adjust the line that initializes 'client' and 'operation'
-            # to match the example from Google's docs (e.g., client = genai.Client() and then client.models.generate_videos)
-            # The structure for `generate_content` is more common for multimodal models,
-            # but I'm basing this on the expectation that `google.generativeai` should work.
+        operation = client.models.generate_videos(
+            model=VEO_MODEL_NAME_GENAI,
+            prompt=prompt,
+            config=config_dict, # Pass the dictionary directly
         )
         
         # Poll for operation completion
-        while not operation.done():
+        # The operation object has a 'done' attribute (boolean) and a 'reload' method
+        while not operation.done:
             print("Video generation in progress... (waiting 20s)")
             time.sleep(20)
-            operation = operation.reload() # Reload the operation to get its updated status
+            operation = client.operations.get(operation.name) # Reload operation from the client using its name
 
         if operation.error:
             raise Exception(f"Veo generation failed with error: {operation.error.message}")
@@ -156,17 +153,19 @@ def generate_veo_video(prompt: str, output_path: str):
         generated_video_url = None
         # The structure from google.generativeai.types.GenerateVideosResponse is:
         # response.generated_videos[0].video.uri (types.File)
+        # Access the result() of the operation, then its generated_videos list
         if hasattr(operation.result(), 'generated_videos') and operation.result().generated_videos:
             if hasattr(operation.result().generated_videos[0], 'video') and hasattr(operation.result().generated_videos[0].video, 'uri'):
                 generated_video_url = operation.result().generated_videos[0].video.uri
         
         if not generated_video_url:
-            raise ValueError("Could not find video URL in Veo response. Response structure might have changed.")
+            raise ValueError("Could not find video URL in Veo response. Response structure might have changed or generation failed silently.")
 
         print(f"Veo video generated! Downloading from: {generated_video_url}")
 
         # Download the video
-        # NOTE: Google's documentation suggests appending '&key=GOOGLE_API_KEY' to download from the URI.
+        # NOTE: Google's documentation (e.g., in Colab examples) suggests appending '&key=GOOGLE_API_KEY'
+        # to the URI for direct download from the Generative AI client's provided URI.
         download_url = f"{generated_video_url}&key={GOOGLE_API_KEY}"
         download_response = requests.get(download_url, stream=True)
         download_response.raise_for_status() # Raise an exception for HTTP errors (e.g., 404, 403)
@@ -178,7 +177,6 @@ def generate_veo_video(prompt: str, output_path: str):
 
     except Exception as e:
         print(f"Error during Veo video generation for prompt '{prompt}': {e}")
-        # Add more specific error handling based on genai exceptions if needed
         raise # Re-raise to stop the pipeline if generation fails
 
 def upload_youtube_video(youtube_service, video_path: str, title: str, description: str, tags: list, privacy_status: str):
