@@ -12,18 +12,24 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
-# For Veo (using google-generativeai as per Google's latest examples)
-import google.generativeai as genai
-# --- CRITICAL FIX HERE: Remove Operation from import ---
-# from google.generativeai.types import Operation # Removed this line
-
+# For Vertex AI (Veo) - Using PredictionServiceClient
+# Make sure you have 'google-cloud-aiplatform' installed
+from google.cloud import aiplatform
+from google.cloud.aiplatform_v1.services.prediction_service import PredictionServiceClient
+from google.cloud.aiplatform_v1.types import predict as aiplatform_predict_types # For PredictRequest type
+from google.protobuf.struct_pb2 import Value # For passing JSON-like structures as protobuf
+from google.protobuf import json_format # For parsing dicts into protobuf Value
 
 # --- Configuration ---
-# Google AI Studio / Veo API Key (for google-generativeai client)
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# Google Cloud Project ID and Location (REQUIRED for Vertex AI)
+PROJECT_ID = os.getenv("GCP_PROJECT_ID", "your-gcp-project-id") # Set your Google Cloud Project ID as a GitHub Secret
+LOCATION = os.getenv("GCP_LOCATION", "us-central1") # Set your GCP region (e.g., 'us-central1', 'europe-west4')
 
-# Veo Model Name (as per Google's documentation for google-generativeai)
-VEO_MODEL_NAME_GENAI = "veo-2.0-generate-001" 
+# Veo Prediction Endpoint ID (CRITICAL for this approach)
+# You MUST find this in your Google Cloud Console -> Vertex AI -> Generative AI -> Model Garden (or similar Veo/Video AI section)
+# If Veo is a preview, Google might provide a specific endpoint for it.
+VEO_ENDPOINT_ID = os.getenv("VEO_ENDPOINT_ID", "your-veo-prediction-endpoint-id") # Set this as a GitHub Secret
+VEO_ENDPOINT_NAME = f"projects/{PROJECT_ID}/locations/{LOCATION}/endpoints/{VEO_ENDPOINT_ID}"
 
 VIDEO_OUTPUT_DIR = "generated_videos"
 
@@ -35,6 +41,18 @@ YOUTUBE_CATEGORY_ID = "22" # Example: People & Blogs (adjust as needed for your 
 CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET")
 REFRESH_TOKEN = os.getenv("YOUTUBE_REFRESH_TOKEN")
+
+
+# --- Initialize Vertex AI SDK ---
+# This initializes the client and sets the project/location for subsequent calls.
+try:
+    aiplatform.init(project=PROJECT_ID, location=LOCATION)
+    print(f"Vertex AI SDK initialized for project '{PROJECT_ID}' in location '{LOCATION}'.")
+except Exception as e:
+    print(f"Failed to initialize Vertex AI SDK: {e}")
+    print("Please ensure GCP_PROJECT_ID and GCP_LOCATION are set correctly as GitHub Secrets,")
+    print("and the Vertex AI API is enabled for your project.")
+    exit(1)
 
 
 def authenticate_youtube():
@@ -101,71 +119,76 @@ def authenticate_youtube():
 
 
 def generate_veo_video(prompt: str, output_path: str):
-    """Generates a video using Veo with the google-generativeai client."""
-    print(f"Generating video for prompt: '{prompt}' using Veo via google-generativeai...")
+    """Generates a video using Veo via Vertex AI PredictionServiceClient."""
+    print(f"Generating video for prompt: '{prompt}' using Vertex AI Veo...")
 
-    if not GOOGLE_API_KEY:
-        raise ValueError("GOOGLE_API_KEY environment variable is not set. Cannot use Veo.")
+    # Ensure VEO_ENDPOINT_ID is set if we're using this path
+    if not VEO_ENDPOINT_ID or VEO_ENDPOINT_ID == "your-veo-prediction-endpoint-id":
+        raise ValueError("VEO_ENDPOINT_ID is not set or is default. Please configure it in GitHub Secrets.")
 
     try:
-        genai.configure(api_key=GOOGLE_API_KEY)
-        client = genai.Client() # Initialize the base client
+        # Initialize the prediction service client
+        client_options = {"api_endpoint": f"{LOCATION}-aiplatform.googleapis.com"}
+        client = PredictionServiceClient(client_options=client_options)
 
-        # The config for video generation as a dictionary, passed to 'config' argument
-        config_dict = {
+        # Prepare the instance for the prediction request.
+        # The exact structure of this payload MUST be verified with Google's official Veo documentation for Vertex AI Prediction API.
+        # This is a common pattern for Vertex AI custom models/endpoints.
+        instance_dict = {
+            "prompt": prompt,
             "aspect_ratio": "16:9",
-            "person_generation": "dont_allow",
+            "person_generation": "dont_allow", # "dont_allow" or "allow_adult" or "allow_all"
             "number_of_videos": 1, 
-            "duration_seconds": 8, 
-            # "negative_prompt": "blurry, low quality, bad composition",
-            # "audio_description": "sound of rain",
+            "duration_seconds": 8, # Ensure this is within Veo's limits (e.g., 5-8s for Veo 2)
+            # "negative_prompt": "blurry, low quality, bad composition", # Optional
+            # "audio_description": "sound of rain", # For Veo 3 if applicable
         }
         
-        print("Sending video generation request to Veo (this may take a few minutes)...")
-        # Use the specialized models.generate_videos method
-        operation = client.models.generate_videos(
-            model=VEO_MODEL_NAME_GENAI,
-            prompt=prompt,
-            config=config_dict, # Pass the dictionary directly as 'config'
+        instance_proto = json_format.ParseDict(instance_dict, Value())
+
+        # The prediction request
+        # This calls the deployed Veo endpoint.
+        request = aiplatform_predict_types.PredictRequest(
+            endpoint=VEO_ENDPOINT_NAME, # This is the full resource name of your Veo endpoint
+            instances=[instance_proto]
+            # You might need to add 'parameters' here if the model expects them separately, e.g.:
+            # parameters=json_format.ParseDict({}, Value())
         )
-        
-        while not operation.done:
-            print("Video generation in progress... (waiting 20s)")
-            time.sleep(20)
-            operation = client.operations.get(operation.name) 
 
-        if operation.error:
-            raise Exception(f"Veo generation failed with error: {operation.error.message}")
-        
+        print("Sending video generation request to Veo (this may take a few minutes)...")
+        # Make the prediction call. This method typically returns a synchronous response for predictions,
+        # but for long-running generative tasks, the response itself might contain an operation ID
+        # that needs to be polled, or the API call implicitly handles it.
+        response = client.predict(request=request)
+
+        # IMPORTANT: The way to extract the video URL will depend ENTIRELY
+        # on the structure of `response.predictions`.
+        # You WILL need to print `response.predictions` in a test run to inspect its structure.
         generated_video_url = None
-        
-        # Pattern 1: Direct generated_videos list on the result object (most common for Veo)
-        if hasattr(operation.result(), 'generated_videos') and operation.result().generated_videos:
-            if hasattr(operation.result().generated_videos[0], 'video') and hasattr(operation.result().generated_videos[0].video, 'uri'):
-                generated_video_url = operation.result().generated_videos[0].video.uri
-        
-        # Pattern 2: Nested under candidates -> content -> parts -> file_data or video_uri (for more generic multimodal outputs)
-        if not generated_video_url and hasattr(operation.result(), 'candidates') and operation.result().candidates:
-            for candidate in operation.result().candidates:
-                if hasattr(candidate.content, 'parts') and candidate.content.parts:
-                    for part in candidate.content.parts:
-                        if hasattr(part, 'file_data') and hasattr(part.file_data, 'file_uri'):
-                            generated_video_url = part.file_data.file_uri
-                            break
-                        elif hasattr(part, 'video_uri'):
-                            generated_video_url = part.video_uri
-                            break
-                if generated_video_url:
-                    break
-
+        if response.predictions:
+            # Assuming the video URL is in the first prediction's first generated video URI
+            # This is highly speculative and needs verification from Veo API response examples.
+            prediction_dict = json_format.MessageToDict(response.predictions[0])
+            
+            # Common patterns for video URL extraction:
+            if 'generated_videos' in prediction_dict and prediction_dict['generated_videos']:
+                generated_video_url = prediction_dict['generated_videos'][0].get('uri')
+            elif 'video_uri' in prediction_dict: # Another possibility
+                generated_video_url = prediction_dict['video_uri']
+            elif 'file_data' in prediction_dict and 'file_uri' in prediction_dict['file_data']: # Yet another
+                generated_video_url = prediction_dict['file_data']['file_uri']
+            
         if not generated_video_url:
-            raise ValueError("Could not find video URL in Veo response. Response structure might have changed or generation failed silently.")
+            # Print the full predictions object to debug its structure if URL is not found
+            print(f"DEBUG: Veo Prediction Response: {json_format.MessageToDict(response.predictions)}")
+            raise ValueError("Could not find video URL in Veo prediction response. Response structure unknown or generation failed.")
 
         print(f"Veo video generated! Downloading from: {generated_video_url}")
 
-        download_url = f"{generated_video_url}&key={GOOGLE_API_KEY}"
-        download_response = requests.get(download_url, stream=True)
-        download_response.raise_for_status()
+        # For Vertex AI generated URLs, you typically don't need to append the API key to download.
+        # This is more common with Google AI Studio (genai library) direct URLs.
+        download_response = requests.get(generated_video_url, stream=True)
+        download_response.raise_for_status() # Raise an exception for HTTP errors
         with open(output_path, 'wb') as f:
             for chunk in download_response.iter_content(chunk_size=8192):
                 f.write(chunk)
@@ -247,11 +270,11 @@ if __name__ == "__main__":
 
             video_title = f"AI Generated Video: {prompt[:70]}..."
             if len(prompt) > 70:
-                video_description = f"This video was generated using Google Veo (Gemini API) from the prompt: '{prompt}'.\n\n#AIvideo #Veo #TextToVideo #Automation #GoogleAI #GeminiAPI"
+                video_description = f"This video was generated using Google Veo (Vertex AI) from the prompt: '{prompt}'.\n\n#AIvideo #Veo #TextToVideo #Automation #GoogleAI #VertexAI"
             else:
-                 video_description = f"This video was generated using Google Veo (Gemini API) from the prompt: '{prompt}'. #AIvideo #Veo #TextToVideo #Automation #GoogleAI #GeminiAPI"
+                 video_description = f"This video was generated using Google Veo (Vertex AI) from the prompt: '{prompt}'. #AIvideo #Veo #TextToVideo #Automation #GoogleAI #VertexAI"
 
-            video_tags = ["AI video", "Veo", "Text to Video", "Automation", "Google AI", "Gemini API"]
+            video_tags = ["AI video", "Veo", "Text to Video", "Automation", "Google AI", "Vertex AI"]
             video_tags.extend([tag.strip() for tag in prompt.lower().replace('.', '').replace(',', '').split() if len(tag) > 2][:5]) 
 
             youtube_video_id = upload_youtube_video(
