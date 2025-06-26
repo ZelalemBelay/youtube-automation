@@ -11,10 +11,6 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
-from google.cloud.aiplatform.gapic.schema import predict_pb2
-from google.cloud.aiplatform_v1.services.prediction_service import PredictionServiceClient
-from google.protobuf.struct_pb2 import Value
-from google.protobuf import json_format # Already there, but confirm
 
 # For Vertex AI (Veo)
 # Make sure you have 'google-cloud-aiplatform' installed
