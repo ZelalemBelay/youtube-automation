@@ -24,8 +24,21 @@ jobs:
 
     - name: Install dependencies
       run: |
+        # Always upgrade pip first to get the latest dependency resolver
         python -m pip install --upgrade pip
-        pip install google-cloud-aiplatform google-auth-oauthlib google-api-python-client requests google-generativeai # Keep all of them for safety
+
+        # Install libraries with version constraints to help pip resolve dependencies
+        # These versions are based on generally stable and compatible ranges.
+        pip install \
+          "pyparsing<3.0.0,>=2.4.2" \
+          "httplib2<1.0.0,>=0.19.0" \
+          "google-api-python-client<3.0.0,>=2.0.0" \
+          google-cloud-aiplatform \
+          google-auth-oauthlib \
+          requests \
+          google-generativeai \
+          # Keep all libraries you need. Pip will try to find a compatible set.
+          # The key is to constrain the common, problematic transitive dependencies.
 
     # Authenticate to Google Cloud using Workload Identity Federation
     - name: Authenticate to Google Cloud
