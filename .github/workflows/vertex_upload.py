@@ -14,8 +14,8 @@ from googleapiclient.errors import HttpError
 
 # For Veo (using google-generativeai as per Google's latest examples)
 import google.generativeai as genai
-# We might need types for Operation, but let's see if the direct client handles it
-from google.generativeai.types import GenerateVideosResponse, Operation # Add GenerateVideosResponse if it's used
+# --- CRITICAL FIX HERE: Remove GenerateVideosResponse from import ---
+from google.generativeai.types import Operation # Keep Operation as it's used for polling
 
 
 # --- Configuration ---
@@ -109,19 +109,16 @@ def generate_veo_video(prompt: str, output_path: str):
 
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
-        # --- CRITICAL FIX HERE: Re-introduce genai.Client() and use .models.generate_videos ---
-        # Initialize the base client
-        client = genai.Client() # This was causing an error before, but it's needed for .models.generate_videos
+        client = genai.Client() # Initialize the base client
 
         # The config for video generation as a dictionary, passed to 'config' argument
-        # This method's 'config' parameter is *specifically* for video generation.
         config_dict = {
             "aspect_ratio": "16:9",
-            "person_generation": "dont_allow", # "dont_allow" or "allow_adult" or "allow_all"
+            "person_generation": "dont_allow",
             "number_of_videos": 1, 
-            "duration_seconds": 8, # Ensure this is within Veo's limits (e.g., 5-8s for Veo 2)
-            # "negative_prompt": "blurry, low quality, bad composition", # Optional
-            # "audio_description": "sound of rain", # For Veo 3 if applicable
+            "duration_seconds": 8, 
+            # "negative_prompt": "blurry, low quality, bad composition",
+            # "audio_description": "sound of rain",
         }
         
         print("Sending video generation request to Veo (this may take a few minutes)...")
@@ -132,23 +129,35 @@ def generate_veo_video(prompt: str, output_path: str):
             config=config_dict, # Pass the dictionary directly as 'config'
         )
         
-        # Poll for operation completion
-        # The operation object from client.models.generate_videos needs to be reloaded via client.operations.get
         while not operation.done:
             print("Video generation in progress... (waiting 20s)")
             time.sleep(20)
-            operation = client.operations.get(operation.name) # Correct way to reload operation state
+            operation = client.operations.get(operation.name) 
 
         if operation.error:
             raise Exception(f"Veo generation failed with error: {operation.error.message}")
         
         generated_video_url = None
-        # The structure from google.generativeai.types.GenerateVideosResponse (which is operation.result()) is:
-        # response.generated_videos[0].video.uri 
+        
+        # Pattern 1: Direct generated_videos list on the result object (most common for Veo)
         if hasattr(operation.result(), 'generated_videos') and operation.result().generated_videos:
             if hasattr(operation.result().generated_videos[0], 'video') and hasattr(operation.result().generated_videos[0].video, 'uri'):
                 generated_video_url = operation.result().generated_videos[0].video.uri
         
+        # Pattern 2: Nested under candidates -> content -> parts -> file_data or video_uri (for more generic multimodal outputs)
+        if not generated_video_url and hasattr(operation.result(), 'candidates') and operation.result().candidates:
+            for candidate in operation.result().candidates:
+                if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'file_data') and hasattr(part.file_data, 'file_uri'):
+                            generated_video_url = part.file_data.file_uri
+                            break
+                        elif hasattr(part, 'video_uri'):
+                            generated_video_url = part.video_uri
+                            break
+                if generated_video_url:
+                    break
+
         if not generated_video_url:
             raise ValueError("Could not find video URL in Veo response. Response structure might have changed or generation failed silently.")
 
