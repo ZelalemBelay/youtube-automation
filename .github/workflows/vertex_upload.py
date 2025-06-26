@@ -20,7 +20,7 @@ from google.generativeai import types as genai_types # This contains GenerateVid
 # --- Configuration ---
 # Google AI Studio / Veo API Key (for google-generativeai client)
 # Get this from Google AI Studio and set as a GitHub Secret
-GOOGLE_API_KEY = os.getenv("GCP_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Veo Model Name (as per Google's documentation for google-generativeai)
 VEO_MODEL_NAME_GENAI = "veo-2.0-generate-001" # This is the specific model name used with genai.Client()
