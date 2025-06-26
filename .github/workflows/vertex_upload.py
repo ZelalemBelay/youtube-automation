@@ -17,7 +17,6 @@ from googleapiclient.errors import HttpError
 import google.generativeai as genai
 # We no longer explicitly import GenerateVideosConfig from types,
 # as it seems to be causing issues with your installed version.
-# from google.generativeai import types as genai_types # Removed or commented out
 
 
 # --- Configuration ---
@@ -26,7 +25,7 @@ import google.generativeai as genai
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Veo Model Name (as per Google's documentation for google-generativeai)
-VEO_MODEL_NAME_GENAI = "veo-2.0-generate-001" # This is the specific model name used with genai.Client()
+VEO_MODEL_NAME_GENAI = "veo-2.0-generate-001" # This is the specific model name used with genai.GenerativeModel()
 
 VIDEO_OUTPUT_DIR = "generated_videos"
 
@@ -119,10 +118,11 @@ def generate_veo_video(prompt: str, output_path: str):
     try:
         # Configure the google-generativeai client with your API Key
         genai.configure(api_key=GOOGLE_API_KEY)
-        client = genai.Client() # Initialize the base client
+        # Directly initialize GenerativeModel for the Veo model.
+        # The 'Client()' object is typically implicitly handled or not exposed for this direct model access pattern.
+        model = genai.GenerativeModel(model_name=VEO_MODEL_NAME_GENAI) 
 
         # The config for video generation as a dictionary
-        # This is the change to address 'has no attribute GenerateVideosConfig'
         config_dict = {
             "aspect_ratio": "16:9",
             "person_generation": "dont_allow", # "dont_allow" or "allow_adult" or "allow_all"
@@ -132,32 +132,50 @@ def generate_veo_video(prompt: str, output_path: str):
             # "audio_description": "sound of rain", # For Veo 3 if available and applicable
         }
         
-        # Make the video generation request using models.generate_videos
+        # Make the video generation request using the model's generate_content method
+        # This returns an Operation object for asynchronous processing.
         print("Sending video generation request to Veo (this may take a few minutes)...")
-        operation = client.models.generate_videos(
-            model=VEO_MODEL_NAME_GENAI,
-            prompt=prompt,
-            config=config_dict, # Pass the dictionary directly
+        operation = model.generate_content(
+            prompt,
+            generation_config=config_dict,
+            # stream=False is default, for long-running ops it's usually async
         )
         
         # Poll for operation completion
-        # The operation object has a 'done' attribute (boolean) and a 'reload' method
+        # The operation object has a 'done' attribute (boolean) and a 'result' method
         while not operation.done:
             print("Video generation in progress... (waiting 20s)")
             time.sleep(20)
-            operation = client.operations.get(operation.name) # Reload operation from the client using its name
+            # The operation object returned by generate_content should automatically update its state
+            # No need for client.operations.get(operation.name) here unless it's a separate operation client.
 
         if operation.error:
             raise Exception(f"Veo generation failed with error: {operation.error.message}")
         
         generated_video_url = None
-        # The structure from google.generativeai.types.GenerateVideosResponse is:
-        # response.generated_videos[0].video.uri (types.File)
-        # Access the result() of the operation, then its generated_videos list
-        if hasattr(operation.result(), 'generated_videos') and operation.result().generated_videos:
+        # The structure from genai.types.GenerateContentResponse for Veo (as an operation result):
+        # operation.result().candidates[0].content.parts[0].file_data.file_uri
+        # OR if it's a specific Veo response type, it could be operation.result().generated_videos[0].video.uri
+        
+        # Based on common patterns, let's try extracting from content.parts first
+        if hasattr(operation.result(), 'candidates') and operation.result().candidates:
+            for candidate in operation.result().candidates:
+                if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'file_data') and hasattr(part.file_data, 'file_uri'):
+                            generated_video_url = part.file_data.file_uri
+                            break
+                        elif hasattr(part, 'video_uri'): # Fallback if direct video_uri
+                            generated_video_url = part.video_uri
+                            break
+                if generated_video_url:
+                    break
+        
+        # If the above didn't work, try the specific 'generated_videos' structure for Veo
+        if not generated_video_url and hasattr(operation.result(), 'generated_videos') and operation.result().generated_videos:
             if hasattr(operation.result().generated_videos[0], 'video') and hasattr(operation.result().generated_videos[0].video, 'uri'):
                 generated_video_url = operation.result().generated_videos[0].video.uri
-        
+
         if not generated_video_url:
             raise ValueError("Could not find video URL in Veo response. Response structure might have changed or generation failed silently.")
 
