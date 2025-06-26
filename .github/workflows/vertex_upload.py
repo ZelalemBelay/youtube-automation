@@ -21,7 +21,7 @@ import google.generativeai as genai
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Veo Model Name (as per Google's documentation for google-generativeai)
-VEO_MODEL_NAME_GENAI = "veo-2.0-generate-001" # Double-check this on Google's official Veo documentation
+VEO_MODEL_NAME_GENAI = "veo-2.0-generate-001" 
 
 VIDEO_OUTPUT_DIR = "generated_videos"
 
@@ -109,51 +109,44 @@ def generate_veo_video(prompt: str, output_path: str):
         genai.configure(api_key=GOOGLE_API_KEY)
         model = genai.GenerativeModel(model_name=VEO_MODEL_NAME_GENAI) 
 
-        # --- CRITICAL FIX HERE: NEST VIDEO-SPECIFIC PARAMETERS ---
-        # The 'aspect_ratio' and other video parameters need to be nested
-        # under a 'video_generation_parameters' key within the generation_config.
+        # --- CRITICAL FIX HERE: REMOVE NESTING OF VIDEO PARAMETERS ---
+        # Place video parameters directly in the generation_config dictionary.
         generation_config = {
-            "video_generation_parameters": { # This is the new nesting
-                "aspect_ratio": "16:9",
-                "person_generation": "dont_allow",
-                "number_of_videos": 1,
-                "duration_seconds": 8, # Ensure this is within Veo's limits (e.g., 5-8s for Veo 2)
-                # "negative_prompt": "blurry, low quality, bad composition",
-                # "audio_description": "sound of rain", # For Veo 3 if applicable
-            },
-            # Any other general generation config params go here if needed
-            # For example, safety settings etc., though often handled at top-level configure() or request
-            # "candidate_count": 1 # Example if you want more candidates
+            "aspect_ratio": "16:9",
+            "person_generation": "dont_allow", # "dont_allow" or "allow_adult" or "allow_all"
+            "number_of_videos": 1, 
+            "duration_seconds": 8, # Ensure this is within Veo's limits (e.g., 5-8s for Veo 2)
+            # "negative_prompt": "blurry, low quality, bad composition", # Optional
+            # "audio_description": "sound of rain", # For Veo 3 if applicable
+            # Any other general GenerationConfig parameters go here if needed.
         }
         
         print("Sending video generation request to Veo (this may take a few minutes)...")
-        # For Veo models, the method might specifically be client.models.generate_videos
-        # However, generate_content is common for multimodal models. Let's stick with generate_content
-        # as it was causing the 'Unknown field' error, implying the model was hit correctly.
         operation = model.generate_content(
             prompt,
-            generation_config=generation_config, # Now with nested parameters
+            generation_config=generation_config, # Now with video params directly at top-level
         )
         
         while not operation.done:
             print("Video generation in progress... (waiting 20s)")
             time.sleep(20)
-            operation = client.operations.get(operation.name) # Correct way to reload operation state
+            # Correct way to reload operation state from the client using its name
+            # This is key for polling with google-generativeai for operations.
+            operation = genai.Client().operations.get(operation.name) 
 
         if operation.error:
             raise Exception(f"Veo generation failed with error: {operation.error.message}")
         
         generated_video_url = None
-        # Trying to extract video URL based on common patterns.
-        # The exact path can still vary, inspecting the 'operation.result()' object is key.
+        # Attempt to extract video URL from operation.result().
+        # This part is highly dependent on the exact response structure of the Veo model.
         
-        # Pattern 1: Direct generated_videos list on the result object
+        # Pattern 1: Direct generated_videos list on the result object (most common for Veo)
         if hasattr(operation.result(), 'generated_videos') and operation.result().generated_videos:
             if hasattr(operation.result().generated_videos[0], 'video') and hasattr(operation.result().generated_videos[0].video, 'uri'):
                 generated_video_url = operation.result().generated_videos[0].video.uri
         
-        # Pattern 2: Nested under candidates -> content -> parts -> file_data or video_uri
-        # This is more common for generic multimodal outputs
+        # Pattern 2: Nested under candidates -> content -> parts -> file_data or video_uri (for more generic multimodal outputs)
         if not generated_video_url and hasattr(operation.result(), 'candidates') and operation.result().candidates:
             for candidate in operation.result().candidates:
                 if hasattr(candidate.content, 'parts') and candidate.content.parts:
