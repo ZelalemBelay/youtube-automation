@@ -14,8 +14,8 @@ from googleapiclient.errors import HttpError
 
 # For Veo (using google-generativeai as per Google's latest examples)
 import google.generativeai as genai
-# --- CRITICAL FIX HERE: Remove GenerateVideosResponse from import ---
-from google.generativeai.types import Operation # Keep Operation as it's used for polling
+# --- CRITICAL FIX HERE: Remove Operation from import ---
+# from google.generativeai.types import Operation # Removed this line
 
 
 # --- Configuration ---
