@@ -64,7 +64,7 @@ jobs:
         VEO_ENDPOINT_ID: ${{ secrets.VEO_ENDPOINT_ID }}
 
         # Google API Key for Veo (if your python code uses google.generativeai for Veo)
-        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        GOOGLE_API_KEY: ${{ secrets.GCP_API_KEY }}
 
         # YouTube API Credentials (from GitHub Secrets)
         YOUTUBE_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
