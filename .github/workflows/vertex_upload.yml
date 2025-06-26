@@ -1,12 +1,17 @@
 name: Video Generation and YouTube Upload
 
 on:
-  workflow_dispatch:
   push:
+    branches:
+      - main # or your branch
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write # Required for Workload Identity Federation if using GCP service account
 
     steps:
     - name: Checkout repository
@@ -15,23 +20,33 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.x' # Specify your Python version, e.g., '3.9', '3.10', '3.11'
+        python-version: '3.x' # e.g., '3.10', '3.11'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # Upgrade google-cloud-aiplatform explicitly
-        pip install google-generativeai google-auth-oauthlib google-api-python-client requests
+        # Install google-cloud-aiplatform for Veo, and other libs
+        pip install google-cloud-aiplatform google-auth-oauthlib google-api-python-client requests
+
+    # Add Google Cloud authentication if your GitHub runner isn't already authenticated to GCP
+    # This uses Workload Identity Federation, the recommended way for GitHub Actions to auth with GCP
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL_ID/providers/YOUR_PROVIDER_ID
+        service_account: YOUR_SERVICE_ACCOUNT_EMAIL@YOUR_PROJECT_ID.iam.gserviceaccount.com
+        # Ensure this service account has Vertex AI User and Service Usage Consumer roles
 
     - name: Run Python script
       run: python .github/workflows/vertex_upload.py
       env:
-        # Add any environment variables your script needs, e.g., for API keys
-        VEO_API_KEY: ${{ secrets.GCP_SA_KEY }}
+        # GCP Project and Location for Vertex AI (Veo)
+        GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        GCP_LOCATION: ${{ secrets.GCP_LOCATION }}
+        # Veo Endpoint ID (CRITICAL for PredictionServiceClient approach)
+        VEO_ENDPOINT_ID: ${{ secrets.VEO_ENDPOINT_ID }}
+
         # YouTube API Credentials (from GitHub Secrets)
         YOUTUBE_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-        GOOGLE_API_KEY: ${{ secrets.GCP_API_KEY }}
         YOUTUBE_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         YOUTUBE_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-        # YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }} # If you pass client secrets as env vars
-        # Make sure client_secrets.json and token.pickle are handled securely if not env vars
