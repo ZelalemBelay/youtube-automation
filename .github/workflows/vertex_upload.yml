@@ -30,7 +30,7 @@ jobs:
         # These versions are chosen to be recent and broadly compatible.
         # If one combination still fails, minor adjustments to these versions might be needed.
         pip install \
-          "google-generativeai==0.7.0" \
+          "google-generativeai==0.3.0" \
           "google-cloud-aiplatform==1.40.0" \
           "google-auth-oauthlib==1.2.0" \
           "google-api-python-client==2.170.0" \
