@@ -25,17 +25,19 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # Install google-cloud-aiplatform for Veo, and other libs
-        pip install google-cloud-aiplatform google-auth-oauthlib google-api-python-client requests
+        pip install google-cloud-aiplatform google-auth-oauthlib google-api-python-client requests google-generativeai # Keep all of them for safety
 
-    # Add Google Cloud authentication if your GitHub runner isn't already authenticated to GCP
-    # This uses Workload Identity Federation, the recommended way for GitHub Actions to auth with GCP
+    # Authenticate to Google Cloud using Workload Identity Federation
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v2
       with:
-        workload_identity_provider: projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL_ID/providers/YOUR_PROVIDER_ID
-        service_account: YOUR_SERVICE_ACCOUNT_EMAIL@YOUR_PROJECT_ID.iam.gserviceaccount.com
-        # Ensure this service account has Vertex AI User and Service Usage Consumer roles
+        # --- CRITICAL FIX HERE ---
+        # Replace with the EXACT resource name you copied from GCP.
+        # It should be in the format: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID
+        workload_identity_provider: 'projects/381781776567/locations/global/workloadIdentityPools/github-pool/providers/github-actions-provider'
+        service_account: 'vertex-ai-admin-or-vertex-ai-d@youtube-auto-uploader-463700.iam.gserviceaccount.com'
+        # Ensure this service account has Vertex AI User and Service Usage Consumer roles,
+        # and Workload Identity User role on the Workload Identity Pool.
 
     - name: Run Python script
       run: python .github/workflows/vertex_upload.py
@@ -43,10 +45,13 @@ jobs:
         # GCP Project and Location for Vertex AI (Veo)
         GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         GCP_LOCATION: ${{ secrets.GCP_LOCATION }}
-        # Veo Endpoint ID (CRITICAL for PredictionServiceClient approach)
+        # Veo Endpoint ID (only needed if using PredictionServiceClient, but let's keep it defined for now)
         VEO_ENDPOINT_ID: ${{ secrets.VEO_ENDPOINT_ID }}
 
+        # Google API Key for Veo (if your python code uses google.generativeai for Veo)
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+
         # YouTube API Credentials (from GitHub Secrets)
-        YOUTUBE_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-        YOUTUBE_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-        YOUTUBE_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+        YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+        YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
