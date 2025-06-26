@@ -36,14 +36,14 @@ CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET")
 REFRESH_TOKEN = os.getenv("YOUTUBE_REFRESH_TOKEN")
 
-print(REFRESH_TOKEN)
-
 def authenticate_youtube():
     """
     Authenticates with YouTube Data API using OAuth 2.0.
     Prioritizes loading from token.pickle, then uses refresh token from environment.
     This function is designed for a non-interactive CI/CD environment.
     """
+    print(REFRESH_TOKEN)
+
     creds = None
     token_pickle_path = "token.pickle"
 
