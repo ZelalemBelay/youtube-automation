@@ -133,8 +133,12 @@ def generate_veo_video(prompt: str, output_path: str):
     try:
         # Use GenerativeModel for Veo (as per latest patterns for Google's generative models)
         # The 'preview' namespace is crucial for pre-GA models like Veo.
-        model = aiplatform.preview.generative_models.GenerativeModel(model_name="veo-2.0-generate")
+        VEO_MODEL_RESOURCE_NAME = f"publishers/google/models/veo-2.0-generate" # Or 'veo-3.0-generate' if available to you
 
+        model = aiplatform.preview.generative_models.GenerativeModel(
+            model_name=VEO_MODEL_RESOURCE_NAME
+        )
+        
         # The input structure for Veo. Refer to latest Veo API docs for exact parameters.
         # This is based on typical generative model API structures.
         generation_config = {
