@@ -1,47 +1,46 @@
-import os, json
+import os
+import json
 import requests
 import mimetypes
 import subprocess
 import random
 import textwrap
+import shutil
 from pathlib import Path
 from pydub import AudioSegment
 from newspaper import Article
 from google.cloud import texttospeech
 from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 
 # === CONFIG ===
 GNEWS_API_KEY = os.getenv("GNEWS_KEY")
 GNEWS_API_ENDPOINT = "https://gnews.io/api/v4/top-headlines"
 IMAGE_DIR = ".github/workflows/images"
 VOICE_PATH = ".github/workflows/voice.mp3"
-VIDEO_PATH = ".github/workflows/final_news.mp4"
 ASS_PATH = ".github/workflows/subtitles.ass"
+TEMP_VIDEO_FILE = "temp_final_video.mp4"
 IMAGE_COUNT = 10
 VIDEO_LENGTH_SECONDS = 420
 FONT_TEXT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-BGM_FILES = [
-    "./assets/bkg1.mp3",
-    "./assets/bkg2.mp3"
-]
-
-LOGO_FILE = "assets/icon.png"
-LIKE_FILE = "assets/like.gif"
+BGM_FILES = ["assets/bkg1.mp3", "assets/bkg2.mp3"]
 
 SKIP_DOMAINS = [
     "washingtonpost.com", "navigacloud.com", "redlakenationnews.com",
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
 ]
 
+YT_CLIENT_SECRET_JSON = os.getenv("YT_CLIENT_SECRET_JSON")
+YT_REFRESH_TOKEN = os.getenv("YT_REFRESH_TOKEN")
+YT_UPLOAD_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+
 service_account_info = json.loads(os.getenv("GCP_SA_KEY"))
 creds = service_account.Credentials.from_service_account_info(
     service_account_info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
 )
-
-credentials = service_account.Credentials.from_service_account_info(service_account_info)
-
-# Pass credentials to the TTS client
-client = texttospeech.TextToSpeechClient(credentials=credentials)
+client = texttospeech.TextToSpeechClient(credentials=creds)
 
 def get_latest_news():
     params = {"token": GNEWS_API_KEY, "lang": "en", "country": "us", "max": 5}
@@ -97,14 +96,7 @@ def download_image(url, path):
 
 def generate_voice(text, out_path):
     print("🎤 Generating natural voice with Google TTS...")
-
-    service_account_info = json.loads(os.environ["GCP_SA_KEY"])
-    creds = service_account.Credentials.from_service_account_info(service_account_info)
-
-    client = texttospeech.TextToSpeechClient(credentials=creds)
-
-    max_bytes = 4900
-    chunks = []
+    chunks, max_bytes = [], 4900
     current_chunk = ""
     for paragraph in text.split("\n"):
         if len(current_chunk.encode("utf-8")) + len(paragraph.encode("utf-8")) < max_bytes:
@@ -119,16 +111,9 @@ def generate_voice(text, out_path):
     for i, chunk in enumerate(chunks):
         print(f"🧩 Synthesizing chunk {i+1}/{len(chunks)}")
         synthesis_input = texttospeech.SynthesisInput(text=chunk)
-        voice = texttospeech.VoiceSelectionParams(
-            language_code="en-US",
-            name="en-US-Wavenet-D"
-        )
+        voice = texttospeech.VoiceSelectionParams(language_code="en-US", name=random.choice(["en-US-Wavenet-D", "en-US-Wavenet-F"]))
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
-        response = client.synthesize_speech(
-            input=synthesis_input,
-            voice=voice,
-            audio_config=audio_config
-        )
+        response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
         full_audio += response.audio_content
 
     with open(out_path, "wb") as out:
@@ -137,9 +122,6 @@ def generate_voice(text, out_path):
 
 def generate_ass(text, audio_path, ass_path):
     print("📝 Generating styled subtitles (optimized)...")
-    import time
-    start = time.time()
-
     audio = AudioSegment.from_file(audio_path)
     duration = len(audio) / 1000.0
     lines = textwrap.wrap(text, width=70)
@@ -164,28 +146,19 @@ Style: Default,Arial,56,&H00FFFF00,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-
     dialogues = "\n".join(
         f"Dialogue: 0,{fmt_time(i * per_line)},{fmt_time((i + 1) * per_line)},Default,,0,0,0,,{line}"
         for i, line in enumerate(lines)
     )
-
     with open(ass_path, "w") as f:
         f.write(header + dialogues)
-
-    print(f"✅ Subtitles created in {time.time() - start:.2f}s")
+    print(f"✅ Subtitles created.")
 
 def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_length, bgm_candidates):
     images = sorted(Path(image_dir).glob("*"))
     if not images:
         print("❌ No images found.")
         return
-
-    assert Path(audio_path).exists(), "Voiceover missing!"
-    selected_bgm = random.choice(bgm_candidates)
-    assert Path(selected_bgm).exists(), "BGM missing!"
-    assert Path(LOGO_FILE).exists(), "Logo missing!"
-    assert Path(LIKE_FILE).exists(), "Like GIF missing!"
 
     per_image = video_length / len(images)
     slide_dir = Path("video_slides")
@@ -205,66 +178,69 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
         for path in slide_paths:
             f.write(f"file '{path.resolve()}'\n")
 
+    selected_bgm = random.choice(bgm_candidates)
     print(f"🎶 Mixing background music: {selected_bgm}")
+
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0", "-i", str(concat_list),
         "-i", audio_path,
         "-i", selected_bgm,
-        "-ignore_loop", "0", "-i", LIKE_FILE,
-        "-loop", "1", "-i", LOGO_FILE,
         "-filter_complex",
-        "[1:a]volume=1.0[a1];"
-        "[2:a]volume=0.05[a2];"
-        "[a1][a2]amix=inputs=2:duration=first:normalize=0[aout];"
-        "[0:v]ass=subtitles.ass[v0];"
-        "[3:v]scale=190:50[gif];"
-        "[4:v]scale=60:60[logo];"
-        "[v0][logo]overlay=10:10[v1];"
-        "[v1][gif]overlay=W-w-10:10[v2];"
-        "[v2]drawtext=text='HotWired':fontfile='" + FONT_TEXT + "':fontcolor=red:fontsize=36:x=75:y=18[v]",
-        "-map", "[v]",
-        "-map", "[aout]",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-shortest",
-        "-loglevel", "error",
+        "[1:a]volume=1.0[a1];[2:a]volume=0.05[a2];[a1][a2]amix=inputs=2:duration=first:normalize=0[aout]",
+        "-map", "0:v:0", "-map", "[aout]",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-shortest", "-loglevel", "error",
         output_path
     ]
 
     print("🎞 Rendering final video...")
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print("❌ FFmpeg failed:")
-        print("Command:", e.cmd)
-        raise
-    print(f"✅ Final video saved: {output_path}")
+    subprocess.run(cmd, check=True)
+    print(f"✅ Final video rendered: {output_path}")
+
+def upload_to_youtube(video_path, title, description):
+    creds_info = json.loads(YT_CLIENT_SECRET_JSON)
+    creds = Credentials(
+        None,
+        refresh_token=YT_REFRESH_TOKEN,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=creds_info["installed"]["client_id"],
+        client_secret=creds_info["installed"]["client_secret"],
+        scopes=YT_UPLOAD_SCOPES
+    )
+    creds.refresh(Request())
+    youtube = build("youtube", "v3", credentials=creds)
+
+    body = {
+        "snippet": {
+            "title": title,
+            "description": description,
+            "tags": ["news", "ai generated", "daily news"],
+            "categoryId": "25"
+        },
+        "status": {"privacyStatus": "public"}
+    }
+
+    print("📤 Uploading video to YouTube...")
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body=body,
+        media_body=video_path
+    )
+    response = request.execute()
+    print(f"✅ Video uploaded: https://youtube.com/watch?v={response['id']}")
 
 def cleanup_temp_files():
-    import shutil
-
     print("🧹 Cleaning up temporary files...")
-
-    slide_dir = Path("video_slides")
-    if slide_dir.exists():
-        shutil.rmtree(slide_dir)
-
-    image_dir = Path(IMAGE_DIR)
-    if image_dir.exists():
-        shutil.rmtree(image_dir)
-
-    for path in [VOICE_PATH, ASS_PATH, "slides.txt"]:
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
-
+    shutil.rmtree("video_slides", ignore_errors=True)
+    shutil.rmtree(IMAGE_DIR, ignore_errors=True)
+    for f in [VOICE_PATH, ASS_PATH, "slides.txt"]:
+        try: os.remove(f)
+        except FileNotFoundError: pass
     print("✅ Cleanup complete.")
 
 if __name__ == "__main__":
     os.makedirs(IMAGE_DIR, exist_ok=True)
-
     print("📰 Fetching news...")
     title, url, content = get_latest_news()
     if not title or not url:
@@ -285,7 +261,6 @@ if __name__ == "__main__":
             downloaded += 1
             if downloaded >= IMAGE_COUNT:
                 break
-
     if downloaded == 0:
         print("❌ No images downloaded, exiting.")
         exit()
@@ -297,6 +272,11 @@ if __name__ == "__main__":
     generate_ass(narration_text, VOICE_PATH, ASS_PATH)
 
     print("🎞 Creating video...")
-    create_ffmpeg_video(IMAGE_DIR, VOICE_PATH, VIDEO_PATH, ASS_PATH, VIDEO_LENGTH_SECONDS, BGM_FILES)
+    create_ffmpeg_video(IMAGE_DIR, VOICE_PATH, TEMP_VIDEO_FILE, ASS_PATH, VIDEO_LENGTH_SECONDS, BGM_FILES)
+
+    print("📤 Uploading to YouTube...")
+    upload_to_youtube(TEMP_VIDEO_FILE, title, content)
 
     cleanup_temp_files()
+    try: os.remove(TEMP_VIDEO_FILE)
+    except FileNotFoundError: pass

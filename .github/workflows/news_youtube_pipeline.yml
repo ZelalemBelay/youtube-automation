@@ -2,10 +2,10 @@ name: Daily News Video
 
 on:
   schedule:
-    - cron: '0 12 * * *'  # 7 AM CST (CST = UTC-5, so 7+5 = 12 UTC)
-    - cron: '0 10 * * *'  # 5 AM CST (10 UTC)
-  workflow_dispatch:      # Manual run option
-  push:                   # Optional: run on push
+    - cron: '0 10 * * *'  # 5 AM CST (UTC+5)
+    - cron: '0 12 * * *'  # 7 AM CST
+  workflow_dispatch:
+  push:
 
 jobs:
   build-video:
@@ -28,7 +28,10 @@ jobs:
             pydub \
             google-cloud-texttospeech \
             newspaper3k \
-            lxml_html_clean
+            lxml_html_clean \
+            google-auth \
+            google-auth-oauthlib \
+            google-api-python-client
 
       - name: 🧰 Install system dependencies
         run: |
@@ -47,18 +50,25 @@ jobs:
             libffi-dev \
             build-essential
 
-      - name: 📁 Ensure assets directory exists
+      - name: 📁 Check assets directory
         run: |
           ls assets || echo "⚠️ Warning: 'assets' folder or its files might be missing"
 
-      - name: 🎬 Run video generation script
+      - name: 🎬 Run video generation and YouTube upload
         env:
           GCP_API_KEY: ${{ secrets.GCP_API_KEY }}
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
           GSEARCH_CSE_ID: ${{ secrets.GSEARCH_CSE_ID }}
+          YT_CLIENT_SECRET_B64: ${{ secrets.YT_CLIENT_SECRET_B64 }}  # base64 of client_secrets.json
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         run: |
+          mkdir -p ~/.config/gcloud
+          echo "${YT_CLIENT_SECRET_B64}" | base64 -d > client_secrets.json
           python create_news_video.py
 
       - name: 🧹 Clean up credentials
-        run: rm -f gcp-key.json
+        run: |
+          rm -f client_secrets.json || true
