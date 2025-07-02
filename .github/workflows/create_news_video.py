@@ -20,7 +20,7 @@ VIDEO_PATH = "final_news.mp4"
 ASS_PATH = "subtitles.ass"
 METADATA_PATH = "video_metadata.json"
 IMAGE_COUNT = 10
-VIDEO_LENGTH_SECONDS = 420
+IMAGE_DURATION = 5  # seconds per image
 FONT_TEXT = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
 BGM_FILES = ["./assets/bkg1.mp3", "./assets/bkg2.mp3"]
 LOGO_FILE = "assets/icon.png"
@@ -146,21 +146,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f.write(header + dialogues)
     print(f"✅ Subtitles created.")
 
-def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_length, bgm_candidates, metadata):
+def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, bgm_candidates, metadata):
     images = sorted(Path(image_dir).glob("*"))
     if not images:
         print("❌ No images found.")
         return
 
-    per_image = video_length / len(images)
+    audio = AudioSegment.from_file(audio_path)
+    duration = int(len(audio) / 1000.0)
+    total_images_needed = duration // IMAGE_DURATION + 1
+    repeated_images = [images[i % len(images)] for i in range(int(total_images_needed))]
+
     slide_dir = Path("video_slides")
     slide_dir.mkdir(exist_ok=True)
     slide_paths = []
-    for i, img in enumerate(images):
+    for i, img in enumerate(repeated_images):
         out = slide_dir / f"slide_{i:03d}.mp4"
         subprocess.run([
             "ffmpeg", "-y", "-loop", "1", "-i", str(img),
-            "-t", f"{per_image:.2f}", "-vf", "scale=1920:1080",
+            "-t", str(IMAGE_DURATION), "-vf", "scale=1920:1080",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out)
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         slide_paths.append(out)
@@ -171,34 +175,23 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
             f.write(f"file '{path.resolve()}'\n")
 
     selected_bgm = random.choice(bgm_candidates)
+    print("🎞 Rendering final video...")
 
-    ffmpeg_cmd = [
+    cmd = [
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
-        "-i", audio_path
-    ]
-
-    if os.path.exists(selected_bgm):
-        print(f"🎶 Mixing background music: {selected_bgm}")
-        ffmpeg_cmd += [
-            "-i", selected_bgm, "-ignore_loop", "0", "-i", LIKE_FILE, "-loop", "1", "-i", LOGO_FILE,
-            "-filter_complex",
-            "[1:a]volume=1.0[a1];"
-            "[2:a]volume=0.05[a2];"
-            "[a1][a2]amix=inputs=2:duration=first:normalize=0[aout];"
-            "[0:v]ass=subtitles.ass,format=yuv420p[v0];"
-            "[3:v]scale=190:50[gif];"
-            "[4:v]scale=60:60[logo];"
-            "[v0][logo]overlay=10:10[tmp1];"
-            "[tmp1]drawtext=text='HotWired':"
-            f"fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[tmp2];"
-            "[tmp2][gif]overlay=W-w-10:10[v]",
-            "-map", "[v]", "-map", "[aout]"
-        ]
-    else:
-        print("⚠️ Background music file not found, proceeding without it.")
-        ffmpeg_cmd += ["-vf", f"ass={ass_path}", "-map", "0:v:0", "-map", "1:a:0"]
-
-    ffmpeg_cmd += [
+        "-i", audio_path, "-i", selected_bgm, "-ignore_loop", "0", "-i", LIKE_FILE,
+        "-loop", "1", "-i", LOGO_FILE,
+        "-filter_complex",
+        "[1:a]volume=1.0[a1];"
+        "[2:a]volume=0.05[a2];"
+        "[a1][a2]amix=inputs=2:duration=first:normalize=0[aout];"
+        "[0:v]ass=subtitles.ass,format=yuv420p[v0];"
+        "[3:v]scale=190:50[gif];"
+        "[4:v]scale=60:60[logo];"
+        "[v0][logo]overlay=10:10[tmp1];"
+        f"[tmp1]drawtext=text='HotWired':fontfile={FONT_TEXT}:fontcolor=red:fontsize=36:x=75:y=18[tmp2];"
+        "[tmp2][gif]overlay=W-w-10:10[v]",
+        "-map", "[v]", "-map", "[aout]",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
         "-metadata", f"title={metadata['title']}",
         "-metadata", f"description={metadata['description']}",
@@ -206,8 +199,7 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
         output_path
     ]
 
-    print("🎞 Rendering final video...")
-    subprocess.run(ffmpeg_cmd, check=True)
+    subprocess.run(cmd, check=True)
     print(f"✅ Final video saved: {output_path}")
 
 if __name__ == "__main__":
@@ -218,15 +210,10 @@ if __name__ == "__main__":
         print("❌ No news found.")
         exit()
 
-    # Prepare metadata
-    VIDEO_TITLE = title
-    VIDEO_DESCRIPTION = content[:800]
-    VIDEO_TAGS = ["news", "USA", "cnn", "trump", "update", "daily"]
-
     metadata = {
-        "title": VIDEO_TITLE,
-        "description": VIDEO_DESCRIPTION,
-        "tags": VIDEO_TAGS
+        "title": title,
+        "description": content[:800],
+        "tags": ["news", "USA", "cnn", "trump", "update", "daily"]
     }
 
     with open(METADATA_PATH, "w") as f:
@@ -256,4 +243,4 @@ if __name__ == "__main__":
     print("📝 Creating subtitles...")
     generate_ass(narration_text, VOICE_PATH, ASS_PATH)
 
-    create_ffmpeg_video(IMAGE_DIR, VOICE_PATH, VIDEO_PATH, ASS_PATH, VIDEO_LENGTH_SECONDS, BGM_FILES, metadata)
+    create_ffmpeg_video(IMAGE_DIR, VOICE_PATH, VIDEO_PATH, ASS_PATH, BGM_FILES, metadata)
