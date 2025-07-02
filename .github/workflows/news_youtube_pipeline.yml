@@ -51,18 +51,11 @@ jobs:
         run: |
           ls assets || echo "⚠️ Warning: 'assets' folder or its files might be missing"
 
-      - name: 🔐 Decode GCP service account JSON
-        run: |
-          echo "${{ secrets.GCP_SA_KEY_BASE64 }}" | base64 -d > gcp-key.json
-        env:
-          GCP_SA_KEY_BASE64: ${{ secrets.GCP_SA_KEY_BASE64 }}
-
       - name: 🎬 Run video generation script
         env:
           GCP_API_KEY: ${{ secrets.GCP_API_KEY }}
           GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
           GSEARCH_CSE_ID: ${{ secrets.GSEARCH_CSE_ID }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
         run: |
           python create_news_video.py
 

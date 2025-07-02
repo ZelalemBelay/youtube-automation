@@ -1,4 +1,4 @@
-import os
+import os, json
 import requests
 import mimetypes
 import subprocess
@@ -8,6 +8,7 @@ from pathlib import Path
 from pydub import AudioSegment
 from newspaper import Article
 from google.cloud import texttospeech
+from google.oauth2 import service_account
 
 # === CONFIG ===
 GNEWS_API_KEY = os.getenv("GNEWS_KEY")
@@ -32,6 +33,13 @@ SKIP_DOMAINS = [
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
 ]
 
+KEY = json.loads(os.getenv("GCP_SA_KEY"))
+creds = service_account.Credentials.from_service_account_info(
+    KEY, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+)
+
+# Create the TTS client using the credentials
+client = texttospeech.TextToSpeechClient(credentials=creds)
 
 def get_latest_news():
     params = {"token": GNEWS_API_KEY, "lang": "en", "country": "us", "max": 5}
