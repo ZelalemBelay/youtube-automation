@@ -53,7 +53,7 @@ jobs:
 
       - name: 🎬 Run video generation script
         env:
-          GCP_API_KEY: ${{ secrets.GCP_API_KEY }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
           GSEARCH_CSE_ID: ${{ secrets.GSEARCH_CSE_ID }}
         run: |

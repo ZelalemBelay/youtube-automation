@@ -118,7 +118,8 @@ def generate_voice(text, out_path):
         synthesis_input = texttospeech.SynthesisInput(text=chunk)
         voice = texttospeech.VoiceSelectionParams(
             language_code="en-US",
-            name=random.choice(["en-US-Wavenet-D", "en-US-Wavenet-F"])
+            name=random.choice(["en-US-Wavenet-D", "en-US-Wavenet-F",
+                                "en-US-Wavenet-E", "en-US-Wavenet-H", "en-US-Wavenet-C"])
         )
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
         response = client.synthesize_speech(
