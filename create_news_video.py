@@ -32,6 +32,7 @@ SKIP_DOMAINS = [
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
 ]
 
+
 def get_latest_news():
     params = {"token": GNEWS_API_KEY, "lang": "en", "country": "us", "max": 5}
     try:
@@ -54,6 +55,7 @@ def get_latest_news():
         print(f"❌ News fetch error: {e}")
         return None, None, None
 
+
 def search_images(query):
     API_KEY = os.getenv("GCP_API_KEY")
     CSE_ID = os.getenv("GSEARCH_CSE_ID")
@@ -67,6 +69,7 @@ def search_images(query):
     except Exception as e:
         print(f"❌ Image search failed: {e}")
         return []
+
 
 def download_image(url, path):
     try:
@@ -83,6 +86,7 @@ def download_image(url, path):
         return path
     except:
         return None
+
 
 def generate_voice(text, out_path):
     print("🎤 Generating natural voice with Google TTS...")
@@ -120,12 +124,10 @@ def generate_voice(text, out_path):
         out.write(full_audio)
     print(f"✅ Voiceover saved: {out_path}")
 
-def generate_ass(text, audio_path, ass_path):
-    from pydub import AudioSegment
-    import textwrap
-    import time
 
+def generate_ass(text, audio_path, ass_path):
     print("📝 Generating styled subtitles (optimized)...")
+    import time
     start = time.time()
 
     audio = AudioSegment.from_file(audio_path)
@@ -163,6 +165,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     print(f"✅ Subtitles created in {time.time() - start:.2f}s")
 
+
 def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_length, bgm_candidates):
     images = sorted(Path(image_dir).glob("*"))
     if not images:
@@ -189,51 +192,61 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
 
     selected_bgm = random.choice(bgm_candidates)
 
-    if os.path.exists(selected_bgm):
-        print(f"🎶 Mixing background music: {selected_bgm}")
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", str(concat_list),
-            "-i", audio_path,
-            "-i", selected_bgm,
-            "-ignore_loop", "0", "-i", LIKE_FILE,
-            "-loop", "1", "-i", LOGO_FILE,
-            "-filter_complex",
-            # Mix audio
-            "[1:a]volume=1.0[a1];"
-            "[2:a]volume=0.05[a2];"
-            "[a1][a2]amix=inputs=2:duration=first:normalize=0[aout];"
-            # Subtitles and overlays
-            "[0:v]ass=subtitles.ass[v0];"
-            "[3:v]scale=190:50[gif];"
-            "[4:v]scale=60:60[logo];"
-            "[v0][logo]overlay=10:10[v1];"
-            "[v1][gif]overlay=W-w-10:10[v2];"
-            "[v2]drawtext=text='HotWired':"
-            f"fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[v]",
-            "-map", "[v]",
-            "-map", "[aout]",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-shortest",
-            output_path
-        ]
-    else:
-        print("⚠️ Background music file not found, proceeding without it.")
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", str(concat_list),
-            "-i", audio_path,
-            "-vf", f"ass={ass_path}",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-shortest",
-            output_path
-        ]
+    print(f"🎶 Mixing background music: {selected_bgm}")
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0", "-i", str(concat_list),
+        "-i", audio_path,
+        "-i", selected_bgm,
+        "-ignore_loop", "0", "-i", LIKE_FILE,
+        "-loop", "1", "-i", LOGO_FILE,
+        "-filter_complex",
+        "[1:a]volume=1.0[a1];"
+        "[2:a]volume=0.05[a2];"
+        "[a1][a2]amix=inputs=2:duration=first:normalize=0[aout];"
+        "[0:v]ass=subtitles.ass[v0];"
+        "[3:v]scale=190:50[gif];"
+        "[4:v]scale=60:60[logo];"
+        "[v0][logo]overlay=10:10[v1];"
+        "[v1][gif]overlay=W-w-10:10[v2];"
+        "[v2]drawtext=text='HotWired':"
+        f"fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[v]",
+        "-map", "[v]",
+        "-map", "[aout]",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-shortest",
+        output_path
+    ]
 
     print("🎞 Rendering final video...")
     subprocess.run(cmd, check=True)
     print(f"✅ Final video saved: {output_path}")
+
+
+def cleanup_temp_files():
+    import shutil
+
+    print("🧹 Cleaning up temporary files...")
+
+    # Delete slide videos
+    slide_dir = Path("video_slides")
+    if slide_dir.exists():
+        shutil.rmtree(slide_dir)
+
+    # Delete downloaded images
+    image_dir = Path(IMAGE_DIR)
+    if image_dir.exists():
+        shutil.rmtree(image_dir)
+
+    # Delete intermediate files
+    for path in [VOICE_PATH, ASS_PATH, "slides.txt"]:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+
+    print("✅ Cleanup complete.")
 
 
 if __name__ == "__main__":
@@ -270,31 +283,7 @@ if __name__ == "__main__":
     print("📝 Creating subtitles...")
     generate_ass(narration_text, VOICE_PATH, ASS_PATH)
 
-def cleanup_temp_files():
-    import shutil
-
-    print("🧹 Cleaning up temporary files...")
-
-    # Delete slide videos
-    slide_dir = Path("video_slides")
-    if slide_dir.exists():
-        shutil.rmtree(slide_dir)
-
-    # Delete downloaded images
-    image_dir = Path(IMAGE_DIR)
-    if image_dir.exists():
-        shutil.rmtree(image_dir)
-
-    # Delete intermediate files
-    for path in [VOICE_PATH, ASS_PATH, "slides.txt"]:
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
-
-    print("✅ Cleanup complete.")
-
+    print("🎞 Creating video...")
     create_ffmpeg_video(IMAGE_DIR, VOICE_PATH, VIDEO_PATH, ASS_PATH, VIDEO_LENGTH_SECONDS, BGM_FILES)
 
     cleanup_temp_files()
-
