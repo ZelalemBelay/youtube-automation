@@ -51,18 +51,20 @@ jobs:
         run: |
           ls assets || echo "⚠️ Warning: 'assets' folder or its files might be missing"
 
-      - name: 🔐 Authenticate Google Cloud (if needed)
-        # Optional: only needed if using service account key
-        if: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_BASE64 != '' }}
+      - name: 🔐 Write GCP service account JSON to file
         run: |
-          echo "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_BASE64 }}" | base64 -d > gcloud_key.json
-          export GOOGLE_APPLICATION_CREDENTIALS=gcloud_key.json
+          echo "${{ secrets.GCP_SA_KEY }}" > gcp-key.json
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
       - name: 🎬 Run video generation script
         env:
           GCP_API_KEY: ${{ secrets.GCP_API_KEY }}
           GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
           GSEARCH_CSE_ID: ${{ secrets.GSEARCH_CSE_ID }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GCP_SA_KEY }}  # Needed if using SA key
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
         run: |
           python create_news_video.py
+
+      - name: 🧹 Clean up credentials
+        run: rm -f gcp-key.json
