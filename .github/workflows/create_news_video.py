@@ -27,6 +27,10 @@ BGM_FILES = [
     "./assets/bkg2.mp3"
 ]
 
+VIDEO_TITLE="NEWS"
+VIDEO_DESCRIPTION="TODAY'S NEWS"
+VIDEO_TAGS="TODAY'S NEWS"
+
 LOGO_FILE = "assets/icon.png"
 LIKE_FILE = "assets/like.gif"
 
@@ -219,6 +223,9 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
             "-map", "[aout]",
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
+            "-metadata", "title=",
+            "-metadata", "description=Auto-generated video using AI, news narration and image slideshow.",
+            "-metadata", "comment=Tags: funny, microwave, fall, AI",
             "-shortest",
             output_path
         ]
@@ -248,6 +255,11 @@ if __name__ == "__main__":
         print("❌ No news found.")
         exit()
 
+    VIDEO_TITLE = title
+    VIDEO_DESCRIPTION=content[:800]
+    VIDEO_TITLE: "Today's news, updates, cnn, USA, trump'"
+
+    print("ZZZ", VIDEO_TITLE, VIDEO_TAGS, VIDEO_DESCRIPTION)
     narration_text = content if content and len(content.strip()) > 50 else title
     narration_text = "Welcome: Please Like comment and Subscribe:.. ON TODAY'S LATEST:  " + narration_text
 
