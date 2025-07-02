@@ -51,11 +51,11 @@ jobs:
         run: |
           ls assets || echo "⚠️ Warning: 'assets' folder or its files might be missing"
 
-      - name: 🔐 Write GCP service account JSON to file
+      - name: 🔐 Decode GCP service account JSON
         run: |
-          echo "${{ secrets.GCP_SA_KEY }}" > gcp-key.json
+          echo "${{ secrets.GCP_SA_KEY_BASE64 }}" | base64 -d > gcp-key.json
         env:
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_SA_KEY_BASE64: ${{ secrets.GCP_SA_KEY_BASE64 }}
 
       - name: 🎬 Run video generation script
         env:
