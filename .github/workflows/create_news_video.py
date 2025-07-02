@@ -27,9 +27,10 @@ BGM_FILES = [
     "./assets/bkg2.mp3"
 ]
 
-VIDEO_TITLE="NEWS"
-VIDEO_DESCRIPTION="TODAY'S NEWS"
-VIDEO_TAGS="TODAY'S NEWS"
+# Will be overwritten later
+VIDEO_TITLE = "NEWS"
+VIDEO_DESCRIPTION = "TODAY'S NEWS"
+VIDEO_TAGS = "TODAY'S NEWS"
 
 LOGO_FILE = "assets/icon.png"
 LIKE_FILE = "assets/like.gif"
@@ -91,18 +92,12 @@ def download_image(url, path):
     except:
         return None
 
-
 def generate_voice(text, out_path):
     print("🎤 Generating natural voice with Google TTS...")
-
-    # Load service account credentials from environment variable
     service_account_info = json.loads(os.environ["GCP_SA_KEY"])
     creds = service_account.Credentials.from_service_account_info(service_account_info)
-
-    # Pass credentials to TextToSpeechClient
     client = texttospeech.TextToSpeechClient(credentials=creds)
 
-    # Prepare and split text into smaller chunks
     max_bytes = 4900
     chunks = []
     current_chunk = ""
@@ -115,14 +110,13 @@ def generate_voice(text, out_path):
     if current_chunk:
         chunks.append(current_chunk.strip())
 
-    # Synthesize audio
     full_audio = b""
     for i, chunk in enumerate(chunks):
         print(f"🧩 Synthesizing chunk {i+1}/{len(chunks)}")
         synthesis_input = texttospeech.SynthesisInput(text=chunk)
         voice = texttospeech.VoiceSelectionParams(
             language_code="en-US",
-            name="en-US-Wavenet-D"  # Or Wavenet-F for female
+            name="en-US-Wavenet-D"
         )
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
         response = client.synthesize_speech(
@@ -223,9 +217,9 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
             "-map", "[aout]",
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
-            "-metadata", "title=",
-            "-metadata", "description=Auto-generated video using AI, news narration and image slideshow.",
-            "-metadata", "comment=Tags: funny, microwave, fall, AI",
+            "-metadata", f"title={VIDEO_TITLE}",
+            "-metadata", f"description={VIDEO_DESCRIPTION}",
+            "-metadata", f"comment=Tags: {VIDEO_TAGS}",
             "-shortest",
             output_path
         ]
@@ -256,8 +250,8 @@ if __name__ == "__main__":
         exit()
 
     VIDEO_TITLE = title
-    VIDEO_DESCRIPTION=content[:800]
-    VIDEO_TITLE: "Today's news, updates, cnn, USA, trump'"
+    VIDEO_DESCRIPTION = content[:800]
+    VIDEO_TAGS = "Today's news, updates, cnn, USA, trump"
 
     print("ZZZ", VIDEO_TITLE, VIDEO_TAGS, VIDEO_DESCRIPTION)
     narration_text = content if content and len(content.strip()) > 50 else title
