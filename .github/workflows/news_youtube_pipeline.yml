@@ -60,15 +60,9 @@ jobs:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
           GSEARCH_CSE_ID: ${{ secrets.GSEARCH_CSE_ID }}
-          YT_CLIENT_SECRET_B64: ${{ secrets.YT_CLIENT_SECRET_B64 }}  # base64 of client_secrets.json
+
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         run: |
-          mkdir -p ~/.config/gcloud
-          echo "${YT_CLIENT_SECRET_B64}" | base64 -d > client_secrets.json
           python create_news_video.py
-
-      - name: 🧹 Clean up credentials
-        run: |
-          rm -f client_secrets.json || true
