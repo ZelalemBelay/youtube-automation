@@ -101,10 +101,17 @@ def download_image(url, path):
 
 def generate_voice(text, out_path):
     print("🎤 Generating natural voice with Google TTS...")
-    client = texttospeech.TextToSpeechClient()
+
+    # Load service account credentials from environment variable
+    service_account_info = json.loads(os.environ["GCP_SA_KEY"])
+    creds = service_account.Credentials.from_service_account_info(service_account_info)
+
+    # Pass credentials to TextToSpeechClient
+    client = texttospeech.TextToSpeechClient(credentials=creds)
+
+    # Prepare and split text into smaller chunks
     max_bytes = 4900
     chunks = []
-
     current_chunk = ""
     for paragraph in text.split("\n"):
         if len(current_chunk.encode("utf-8")) + len(paragraph.encode("utf-8")) < max_bytes:
@@ -115,14 +122,14 @@ def generate_voice(text, out_path):
     if current_chunk:
         chunks.append(current_chunk.strip())
 
+    # Synthesize audio
     full_audio = b""
     for i, chunk in enumerate(chunks):
         print(f"🧩 Synthesizing chunk {i+1}/{len(chunks)}")
         synthesis_input = texttospeech.SynthesisInput(text=chunk)
         voice = texttospeech.VoiceSelectionParams(
             language_code="en-US",
-            name=random.choice(["en-US-Wavenet-D", "en-US-Wavenet-F",
-                                "en-US-Wavenet-E", "en-US-Wavenet-H", "en-US-Wavenet-C"])
+            name="en-US-Wavenet-D"  # Or Wavenet-F for female
         )
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
         response = client.synthesize_speech(
