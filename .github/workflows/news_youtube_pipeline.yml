@@ -8,7 +8,7 @@ on:
   push:
 
 jobs:
-  build-video:
+  Build-Video-THEN-Upload-to-YouTube:
     runs-on: ubuntu-latest
 
     steps:
