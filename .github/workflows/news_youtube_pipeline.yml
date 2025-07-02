@@ -65,7 +65,7 @@ jobs:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         run: |
-          python create_news_video.py
+          python .github/workflows/create_news_video.py
 
       - name: 🎬 Upload to YouTube
         env:
@@ -73,4 +73,4 @@ jobs:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         run: |
-          python upload_video.py
+          python .github/workflows/upload_video.py
