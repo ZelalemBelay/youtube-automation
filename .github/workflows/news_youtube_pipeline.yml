@@ -32,6 +32,7 @@ jobs:
             google-auth \
             google-auth-oauthlib \
             google-api-python-client
+            oauth2client
 
       - name: 🧰 Install system dependencies
         run: |
