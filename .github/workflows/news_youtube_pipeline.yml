@@ -5,6 +5,7 @@ on:
     - cron: '0 12 * * *'  # 7 AM CST (UTC+0 = CST+5)
     - cron: '0 10 * * *'  # 5 AM CST
   workflow_dispatch:      # Allows manual run from GitHub UI
+  push:
 
 jobs:
   build-video:
@@ -22,7 +23,7 @@ jobs:
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pydub google-cloud-texttospeech newspaper3k
+          pip install requests pydub google-cloud-texttospeech newspaper3k lxml_html_clean
           sudo apt-get update
           sudo apt-get update && sudo apt-get install -y \
             ffmpeg \
