@@ -1,0 +1,45 @@
+name: Daily News Video
+
+on:
+  schedule:
+    - cron: '0 12 * * *'  # 7 AM CST (UTC+0 = CST+5)
+    - cron: '0 10 * * *'  # 5 AM CST
+  workflow_dispatch:      # Allows manual run from GitHub UI
+
+jobs:
+  build-video:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get update && sudo apt-get install -y \
+            ffmpeg \
+            fonts-noto \
+            python3-dev \
+            libxml2-dev \
+            libxslt-dev \
+            libjpeg-dev \
+            zlib1g-dev \
+            libsndfile1 \
+            poppler-utils \
+            libffi-dev \
+            build-essential
+          sudo apt-get install fonts-noto fonts-noto-color-emoji
+
+      - name: 🎬 Run video generation script
+        env:
+          GCP_API_KEY: ${{ secrets.GCP_API_KEY }}
+          GNEWS_KEY: ${{ secrets.GNEWS_KEY}}
+          GSEARCH_CSE_ID: ${{ secrets.GSEARCH_CSE_ID}}
+        run: |
+          python create_news_video.py
