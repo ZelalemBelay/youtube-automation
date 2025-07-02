@@ -4,11 +4,10 @@ import mimetypes
 import subprocess
 import random
 import textwrap
+import json
 from pathlib import Path
 from pydub import AudioSegment
 from newspaper import Article
-
-import json
 from google.cloud import texttospeech
 from google.oauth2 import service_account
 
@@ -19,22 +18,13 @@ IMAGE_DIR = "images"
 VOICE_PATH = "voice.mp3"
 VIDEO_PATH = "final_news.mp4"
 ASS_PATH = "subtitles.ass"
+METADATA_PATH = "video_metadata.json"
 IMAGE_COUNT = 10
 VIDEO_LENGTH_SECONDS = 420
 FONT_TEXT = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
-BGM_FILES = [
-    "./assets/bkg1.mp3",
-    "./assets/bkg2.mp3"
-]
-
-# Will be overwritten later
-VIDEO_TITLE = "NEWS"
-VIDEO_DESCRIPTION = "TODAY'S NEWS"
-VIDEO_TAGS = "TODAY'S NEWS"
-
+BGM_FILES = ["./assets/bkg1.mp3", "./assets/bkg2.mp3"]
 LOGO_FILE = "assets/icon.png"
 LIKE_FILE = "assets/like.gif"
-
 SKIP_DOMAINS = [
     "washingtonpost.com", "navigacloud.com", "redlakenationnews.com",
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
@@ -97,7 +87,6 @@ def generate_voice(text, out_path):
     service_account_info = json.loads(os.environ["GCP_SA_KEY"])
     creds = service_account.Credentials.from_service_account_info(service_account_info)
     client = texttospeech.TextToSpeechClient(credentials=creds)
-
     max_bytes = 4900
     chunks = []
     current_chunk = ""
@@ -109,23 +98,14 @@ def generate_voice(text, out_path):
             current_chunk = paragraph + "\n"
     if current_chunk:
         chunks.append(current_chunk.strip())
-
     full_audio = b""
     for i, chunk in enumerate(chunks):
         print(f"🧩 Synthesizing chunk {i+1}/{len(chunks)}")
         synthesis_input = texttospeech.SynthesisInput(text=chunk)
-        voice = texttospeech.VoiceSelectionParams(
-            language_code="en-US",
-            name="en-US-Wavenet-D"
-        )
+        voice = texttospeech.VoiceSelectionParams(language_code="en-US", name="en-US-Wavenet-D")
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
-        response = client.synthesize_speech(
-            input=synthesis_input,
-            voice=voice,
-            audio_config=audio_config
-        )
+        response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
         full_audio += response.audio_content
-
     with open(out_path, "wb") as out:
         out.write(full_audio)
     print(f"✅ Voiceover saved: {out_path}")
@@ -164,10 +144,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     with open(ass_path, "w") as f:
         f.write(header + dialogues)
-
     print(f"✅ Subtitles created.")
 
-def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_length, bgm_candidates):
+def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_length, bgm_candidates, metadata):
     images = sorted(Path(image_dir).glob("*"))
     if not images:
         print("❌ No images found.")
@@ -193,15 +172,15 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
 
     selected_bgm = random.choice(bgm_candidates)
 
+    ffmpeg_cmd = [
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+        "-i", audio_path
+    ]
+
     if os.path.exists(selected_bgm):
         print(f"🎶 Mixing background music: {selected_bgm}")
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", str(concat_list),
-            "-i", audio_path,
-            "-i", selected_bgm,
-            "-ignore_loop", "0", "-i", LIKE_FILE,
-            "-loop", "1", "-i", LOGO_FILE,
+        ffmpeg_cmd += [
+            "-i", selected_bgm, "-ignore_loop", "0", "-i", LIKE_FILE, "-loop", "1", "-i", LOGO_FILE,
             "-filter_complex",
             "[1:a]volume=1.0[a1];"
             "[2:a]volume=0.05[a2];"
@@ -213,49 +192,46 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
             "[tmp1]drawtext=text='HotWired':"
             f"fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[tmp2];"
             "[tmp2][gif]overlay=W-w-10:10[v]",
-            "-map", "[v]",
-            "-map", "[aout]",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-metadata", f"title={VIDEO_TITLE}",
-            "-metadata", f"description={VIDEO_DESCRIPTION}",
-            "-metadata", f"comment=Tags: {VIDEO_TAGS}",
-            "-shortest",
-            output_path
+            "-map", "[v]", "-map", "[aout]"
         ]
     else:
         print("⚠️ Background music file not found, proceeding without it.")
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", str(concat_list),
-            "-i", audio_path,
-            "-vf", f"ass={ass_path}",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-shortest",
-            output_path
-        ]
+        ffmpeg_cmd += ["-vf", f"ass={ass_path}", "-map", "0:v:0", "-map", "1:a:0"]
+
+    ffmpeg_cmd += [
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
+        "-metadata", f"title={metadata['title']}",
+        "-metadata", f"description={metadata['description']}",
+        "-metadata", f"comment=Tags: {', '.join(metadata['tags'])}",
+        output_path
+    ]
 
     print("🎞 Rendering final video...")
-    subprocess.run(cmd, check=True)
+    subprocess.run(ffmpeg_cmd, check=True)
     print(f"✅ Final video saved: {output_path}")
 
 if __name__ == "__main__":
     os.makedirs(IMAGE_DIR, exist_ok=True)
-
     print("📰 Fetching news...")
     title, url, content = get_latest_news()
     if not title or not url:
         print("❌ No news found.")
         exit()
 
+    # Prepare metadata
     VIDEO_TITLE = title
     VIDEO_DESCRIPTION = content[:800]
-    VIDEO_TAGS = "Today's news, updates, cnn, USA, trump"
+    VIDEO_TAGS = ["news", "USA", "cnn", "trump", "update", "daily"]
 
-    print("ZZZ", VIDEO_TITLE, VIDEO_TAGS, VIDEO_DESCRIPTION)
-    narration_text = content if content and len(content.strip()) > 50 else title
-    narration_text = "Welcome: Please Like comment and Subscribe:.. ON TODAY'S LATEST:  " + narration_text
+    metadata = {
+        "title": VIDEO_TITLE,
+        "description": VIDEO_DESCRIPTION,
+        "tags": VIDEO_TAGS
+    }
+
+    with open(METADATA_PATH, "w") as f:
+        json.dump(metadata, f, indent=2)
+    print("✅ Saved video metadata to video_metadata.json")
 
     print("🔍 Searching for images...")
     image_urls = search_images(title)
@@ -273,10 +249,11 @@ if __name__ == "__main__":
         print("❌ No images downloaded, exiting.")
         exit()
 
+    narration_text = f"Welcome to today's update. Please like, comment, and subscribe. Here's the latest:\n\n{content}"
     print("🎤 Creating voiceover...")
     generate_voice(narration_text, VOICE_PATH)
 
     print("📝 Creating subtitles...")
     generate_ass(narration_text, VOICE_PATH, ASS_PATH)
 
-    create_ffmpeg_video(IMAGE_DIR, VOICE_PATH, VIDEO_PATH, ASS_PATH, VIDEO_LENGTH_SECONDS, BGM_FILES)
+    create_ffmpeg_video(IMAGE_DIR, VOICE_PATH, VIDEO_PATH, ASS_PATH, VIDEO_LENGTH_SECONDS, BGM_FILES, metadata)
