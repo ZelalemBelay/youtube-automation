@@ -33,13 +33,16 @@ SKIP_DOMAINS = [
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
 ]
 
-KEY = json.loads(os.getenv("GCP_SA_KEY"))
+service_account_info = json.loads(os.getenv("GCP_SA_KEY"))
 creds = service_account.Credentials.from_service_account_info(
-    KEY, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    service_account_info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
 )
 
-# Create the TTS client using the credentials
-client = texttospeech.TextToSpeechClient(credentials=creds)
+print("ZZZZZZ" + service_account_info)
+credentials = service_account.Credentials.from_service_account_info(service_account_info)
+
+# Pass credentials to the TTS client
+client = texttospeech.TextToSpeechClient(credentials=credentials)
 
 def get_latest_news():
     params = {"token": GNEWS_API_KEY, "lang": "en", "country": "us", "max": 5}
