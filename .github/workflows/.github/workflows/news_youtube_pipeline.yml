@@ -55,7 +55,7 @@ jobs:
         run: |
           ls assets || echo "⚠️ Warning: 'assets' folder or its files might be missing"
 
-      - name: 🎬 Run video generation and YouTube upload
+      - name: 🎬 Run video generation
         env:
           GCP_API_KEY: ${{ secrets.GCP_API_KEY }}
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
@@ -67,3 +67,11 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         run: |
           python create_news_video.py
+
+      - name: 🎬 Upload to YouTube
+        env:
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+        run: |
+          python upload_video.py

@@ -35,7 +35,7 @@ request_body = {
     }
 }
 
-media = MediaFileUpload('video_output/generated_video.mp4', mimetype='video/mp4', resumable=True)
+media = MediaFileUpload('final_news.mp4', mimetype='video/mp4', resumable=True)
 
 response = youtube.videos().insert(
     part='snippet,status',

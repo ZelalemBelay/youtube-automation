@@ -1,4 +1,4 @@
-import os, json
+import os
 import requests
 import mimetypes
 import subprocess
@@ -7,19 +7,21 @@ import textwrap
 from pathlib import Path
 from pydub import AudioSegment
 from newspaper import Article
+
+import json
 from google.cloud import texttospeech
 from google.oauth2 import service_account
 
 # === CONFIG ===
 GNEWS_API_KEY = os.getenv("GNEWS_KEY")
 GNEWS_API_ENDPOINT = "https://gnews.io/api/v4/top-headlines"
-IMAGE_DIR = ".github/workflows/images"
-VOICE_PATH = ".github/workflows/voice.mp3"
-VIDEO_PATH = ".github/workflows/final_news.mp4"
-ASS_PATH = ".github/workflows/subtitles.ass"
+IMAGE_DIR = "images"
+VOICE_PATH = "voice.mp3"
+VIDEO_PATH = "../../final_news.mp4"
+ASS_PATH = "subtitles.ass"
 IMAGE_COUNT = 10
 VIDEO_LENGTH_SECONDS = 420
-FONT_TEXT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+FONT_TEXT = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
 BGM_FILES = [
     "./assets/bkg1.mp3",
     "./assets/bkg2.mp3"
@@ -32,16 +34,6 @@ SKIP_DOMAINS = [
     "washingtonpost.com", "navigacloud.com", "redlakenationnews.com",
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
 ]
-
-service_account_info = json.loads(os.getenv("GCP_SA_KEY"))
-creds = service_account.Credentials.from_service_account_info(
-    service_account_info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-)
-
-credentials = service_account.Credentials.from_service_account_info(service_account_info)
-
-# Pass credentials to the TTS client
-client = texttospeech.TextToSpeechClient(credentials=credentials)
 
 def get_latest_news():
     params = {"token": GNEWS_API_KEY, "lang": "en", "country": "us", "max": 5}
@@ -95,14 +87,18 @@ def download_image(url, path):
     except:
         return None
 
+
 def generate_voice(text, out_path):
     print("🎤 Generating natural voice with Google TTS...")
 
+    # Load service account credentials from environment variable
     service_account_info = json.loads(os.environ["GCP_SA_KEY"])
     creds = service_account.Credentials.from_service_account_info(service_account_info)
 
+    # Pass credentials to TextToSpeechClient
     client = texttospeech.TextToSpeechClient(credentials=creds)
 
+    # Prepare and split text into smaller chunks
     max_bytes = 4900
     chunks = []
     current_chunk = ""
@@ -115,13 +111,14 @@ def generate_voice(text, out_path):
     if current_chunk:
         chunks.append(current_chunk.strip())
 
+    # Synthesize audio
     full_audio = b""
     for i, chunk in enumerate(chunks):
         print(f"🧩 Synthesizing chunk {i+1}/{len(chunks)}")
         synthesis_input = texttospeech.SynthesisInput(text=chunk)
         voice = texttospeech.VoiceSelectionParams(
             language_code="en-US",
-            name="en-US-Wavenet-D"
+            name="en-US-Wavenet-D"  # Or Wavenet-F for female
         )
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
         response = client.synthesize_speech(
@@ -137,9 +134,6 @@ def generate_voice(text, out_path):
 
 def generate_ass(text, audio_path, ass_path):
     print("📝 Generating styled subtitles (optimized)...")
-    import time
-    start = time.time()
-
     audio = AudioSegment.from_file(audio_path)
     duration = len(audio) / 1000.0
     lines = textwrap.wrap(text, width=70)
@@ -154,12 +148,12 @@ def generate_ass(text, audio_path, ass_path):
 
     header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1280
-PlayResY: 720
+PlayResX: 1920
+PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,56,&H00FFFF00,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,40,1
+Style: Default,Arial,72,&H00FFFF00,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,40,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -173,19 +167,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open(ass_path, "w") as f:
         f.write(header + dialogues)
 
-    print(f"✅ Subtitles created in {time.time() - start:.2f}s")
+    print(f"✅ Subtitles created.")
 
 def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_length, bgm_candidates):
     images = sorted(Path(image_dir).glob("*"))
     if not images:
         print("❌ No images found.")
         return
-
-    assert Path(audio_path).exists(), "Voiceover missing!"
-    selected_bgm = random.choice(bgm_candidates)
-    assert Path(selected_bgm).exists(), "BGM missing!"
-    assert Path(LOGO_FILE).exists(), "Logo missing!"
-    assert Path(LIKE_FILE).exists(), "Like GIF missing!"
 
     per_image = video_length / len(images)
     slide_dir = Path("video_slides")
@@ -195,7 +183,7 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
         out = slide_dir / f"slide_{i:03d}.mp4"
         subprocess.run([
             "ffmpeg", "-y", "-loop", "1", "-i", str(img),
-            "-t", f"{per_image:.2f}", "-vf", "scale=1280:720",
+            "-t", f"{per_image:.2f}", "-vf", "scale=1920:1080",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out)
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         slide_paths.append(out)
@@ -205,62 +193,51 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
         for path in slide_paths:
             f.write(f"file '{path.resolve()}'\n")
 
-    print(f"🎶 Mixing background music: {selected_bgm}")
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", str(concat_list),
-        "-i", audio_path,
-        "-i", selected_bgm,
-        "-ignore_loop", "0", "-i", LIKE_FILE,
-        "-loop", "1", "-i", LOGO_FILE,
-        "-filter_complex",
-        "[1:a]volume=1.0[a1];"
-        "[2:a]volume=0.05[a2];"
-        "[a1][a2]amix=inputs=2:duration=first:normalize=0[aout];"
-        "[0:v]ass=subtitles.ass[v0];"
-        "[3:v]scale=190:50[gif];"
-        "[4:v]scale=60:60[logo];"
-        "[v0][logo]overlay=10:10[v1];"
-        "[v1][gif]overlay=W-w-10:10[v2];"
-        "[v2]drawtext=text='HotWired':fontfile='" + FONT_TEXT + "':fontcolor=red:fontsize=36:x=75:y=18[v]",
-        "-map", "[v]",
-        "-map", "[aout]",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-shortest",
-        "-loglevel", "error",
-        output_path
-    ]
+    selected_bgm = random.choice(bgm_candidates)
+
+    if os.path.exists(selected_bgm):
+        print(f"🎶 Mixing background music: {selected_bgm}")
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(concat_list),
+            "-i", audio_path,
+            "-i", selected_bgm,
+            "-ignore_loop", "0", "-i", LIKE_FILE,
+            "-loop", "1", "-i", LOGO_FILE,
+            "-filter_complex",
+            "[1:a]volume=1.0[a1];"
+            "[2:a]volume=0.05[a2];"
+            "[a1][a2]amix=inputs=2:duration=first:normalize=0[aout];"
+            "[0:v]ass=subtitles.ass,format=yuv420p[v0];"
+            "[3:v]scale=190:50[gif];"
+            "[4:v]scale=60:60[logo];"
+            "[v0][logo]overlay=10:10[tmp1];"
+            "[tmp1]drawtext=text='HotWired':"
+            f"fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[tmp2];"
+            "[tmp2][gif]overlay=W-w-10:10[v]",
+            "-map", "[v]",
+            "-map", "[aout]",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-shortest",
+            output_path
+        ]
+    else:
+        print("⚠️ Background music file not found, proceeding without it.")
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(concat_list),
+            "-i", audio_path,
+            "-vf", f"ass={ass_path}",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-shortest",
+            output_path
+        ]
 
     print("🎞 Rendering final video...")
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print("❌ FFmpeg failed:")
-        print("Command:", e.cmd)
-        raise
+    subprocess.run(cmd, check=True)
     print(f"✅ Final video saved: {output_path}")
-
-def cleanup_temp_files():
-    import shutil
-
-    print("🧹 Cleaning up temporary files...")
-
-    slide_dir = Path("video_slides")
-    if slide_dir.exists():
-        shutil.rmtree(slide_dir)
-
-    image_dir = Path(IMAGE_DIR)
-    if image_dir.exists():
-        shutil.rmtree(image_dir)
-
-    for path in [VOICE_PATH, ASS_PATH, "slides.txt"]:
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
-
-    print("✅ Cleanup complete.")
 
 if __name__ == "__main__":
     os.makedirs(IMAGE_DIR, exist_ok=True)
@@ -296,7 +273,4 @@ if __name__ == "__main__":
     print("📝 Creating subtitles...")
     generate_ass(narration_text, VOICE_PATH, ASS_PATH)
 
-    print("🎞 Creating video...")
     create_ffmpeg_video(IMAGE_DIR, VOICE_PATH, VIDEO_PATH, ASS_PATH, VIDEO_LENGTH_SECONDS, BGM_FILES)
-
-    cleanup_temp_files()
