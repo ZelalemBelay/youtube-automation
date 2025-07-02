@@ -1,17 +1,20 @@
 import os
-from google.oauth2.credentials import Credentials
+import json
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from google.oauth2.credentials import Credentials
 
-# Define the YouTube upload scope
-SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
-
-# Get secrets from environment variables (you should store these in GitHub Actions secrets)
+# Load YouTube OAuth credentials from environment
 client_id = os.environ['YT_CLIENT_ID']
 client_secret = os.environ['YT_CLIENT_SECRET']
 refresh_token = os.environ['YT_REFRESH_TOKEN']
 
-# Authenticate using refresh token
+SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
+
+# Load video metadata
+with open("video_metadata.json", "r") as f:
+    metadata = json.load(f)
+
 creds = Credentials(
     None,
     refresh_token=refresh_token,
@@ -21,26 +24,23 @@ creds = Credentials(
     scopes=SCOPES,
 )
 
-# Build YouTube API client
 youtube = build('youtube', 'v3', credentials=creds)
 
-# Define the video metadata
 request_body = {
     'snippet': {
-        'title': 'Funny microwave fall 😂',
-        'description': 'Auto-generated video',
-        'tags': ['funny', 'microwave', 'fall', 'AI'],
-        'categoryId': '23'  # 23 = Comedy
+        'title': metadata['title'],
+        'description': metadata['description'],
+        'tags': metadata['tags'],
+        'categoryId': '25'  # 'News & Politics'
     },
     'status': {
         'privacyStatus': 'public'
     }
 }
 
-# Load the video file
 media = MediaFileUpload('final_news.mp4', mimetype='video/mp4', resumable=True)
 
-# Upload to YouTube
+print(f"📤 Uploading video: {metadata['title']}")
 response = youtube.videos().insert(
     part='snippet,status',
     body=request_body,

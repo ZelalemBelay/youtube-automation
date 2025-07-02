@@ -67,6 +67,9 @@ jobs:
         run: |
           python .github/workflows/create_news_video.py
 
+      - name: List files to debug
+        run: ls -R
+
       - name: 🎬 Upload to YouTube
         env:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
