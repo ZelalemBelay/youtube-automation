@@ -202,6 +202,7 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
         ffmpeg_cmd += ["-vf", f"ass={ass_path}", "-map", "0:v:0", "-map", "1:a:0"]
 
     ffmpeg_cmd += [
+        "-t", str(video_length),
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
         "-metadata", f"title={metadata['title']}",
         "-metadata", f"description={metadata['description']}",
