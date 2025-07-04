@@ -38,7 +38,7 @@ request_body = {
     }
 }
 
-media = MediaFileUpload('final_news_with_intro.mp4', mimetype='video/mp4', resumable=True)
+media = MediaFileUpload('final_news.mp4', mimetype='video/mp4', resumable=True)
 
 print(f"📤 Uploading video: {metadata['title']}")
 response = youtube.videos().insert(
