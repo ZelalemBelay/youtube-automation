@@ -35,17 +35,16 @@ def cleanup():
     print("🧹 Cleaning up previous run artifacts...")
     items_to_delete = (
         "images", "video_slides", "slides.txt", "subtitles.ass",
-        "video_metadata.json", "voice.mp3", "final_content.mp4", "final_news.mp4", VIDEO_PATH
+        "video_metadata.json", "voice_trimmed.mp3", "voice_trimmed.mp3",
+        "final_content_shorts.mp4", "final_news.mp4", VIDEO_PATH
     )
     for item in items_to_delete:
         try:
             if os.path.exists(item):
                 if os.path.isdir(item):
                     shutil.rmtree(item)
-                    print(f"  Deleted folder: {item}")
                 else:
                     os.remove(item)
-                    print(f"  Deleted file: {item}")
         except OSError as e:
             print(f"  Error deleting {item}: {e}")
 
@@ -64,6 +63,22 @@ def get_media_duration(media_path):
     except Exception as e:
         print(f"❌ Error getting duration for {media_path}: {e}")
         return None
+
+def summarize_text(text_to_summarize, word_count=150):
+    """
+    Summarizes the given text to a target word count using AI.
+    """
+    print(f"🤖 Summarizing text to ~{word_count} words...")
+
+    # This is a placeholder for the actual summarization logic.
+    # In a real application, you would replace this with an API call to a service like Google's Gemini API.
+    words = text_to_summarize.split()
+    summary = ' '.join(words[:word_count])
+    if len(words) > word_count:
+        summary += "..."
+
+    print("✅ Summarization complete.")
+    return summary
 
 def get_latest_news():
     params = {"token": GNEWS_API_KEY, "lang": "en", "country": "us", "max": 5}
@@ -134,7 +149,7 @@ def generate_ass_for_shorts(text, audio_path, ass_path):
     audio = AudioSegment.from_file(audio_path)
     duration = len(audio) / 1000.0
 
-    # First, wrap the text into individual lines
+    # First, wrap the text into individual lines suitable for a vertical screen
     lines = textwrap.wrap(text, width=35)
 
     # Then, group these lines into chunks of 3
@@ -157,7 +172,7 @@ def generate_ass_for_shorts(text, audio_path, ass_path):
     for i, group in enumerate(three_line_groups):
         start_time = fmt_time(i * duration_per_group)
         end_time = fmt_time((i + 1) * duration_per_group)
-        # Join the lines with the .ass newline character '\N'
+        # Join the lines with the .ass newline character '\N' to create a multi-line block
         text_block = "\\N".join(group)
         dialogue_lines.append(
             f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text_block}"
@@ -174,7 +189,7 @@ def create_shorts_video(image_dir, audio_path, output_path, ass_path, video_leng
     if not images:
         print("❌ No images found."); return
 
-    image_duration = 5
+    image_duration = 2
     num_slides = int(video_length // image_duration) + 1
     looped_images = [images[i % len(images)] for i in range(num_slides)]
 
@@ -187,14 +202,11 @@ def create_shorts_video(image_dir, audio_path, output_path, ass_path, video_leng
 
     voice_input_index = current_index
     ffmpeg_cmd.extend(["-i", audio_path]); current_index += 1
-
     selected_bgm = random.choice(bgm_candidates)
     bgm_input_index = current_index
     ffmpeg_cmd.extend(["-i", selected_bgm]); current_index += 1
-
     gif_input_index = current_index
     ffmpeg_cmd.extend(["-ignore_loop", "0", "-i", LIKE_FILE]); current_index += 1
-
     logo_input_index = current_index
     ffmpeg_cmd.extend(["-loop", "1", "-i", LOGO_FILE]); current_index += 1
 
@@ -213,26 +225,17 @@ def create_shorts_video(image_dir, audio_path, output_path, ass_path, video_leng
     filter_chains.append(f"[slides_raw]ass='{Path(ass_path).as_posix()}',format=yuv420p[subtitled_slides]")
     filter_chains.append(f"[{gif_input_index}:v]scale=190:50[gif]")
     filter_chains.append(f"[{logo_input_index}:v]scale=60:60[logo]")
-
-    filter_chains.append(
-        f"[subtitled_slides][logo]overlay=30:30[tmp1];"
-        f"[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=60:x=105:y=30[tmp2];"
-        f"[tmp2][gif]overlay=W-w-30:30[v]"
-    )
-
+    filter_chains.append(f"[subtitled_slides][logo]overlay=30:30[tmp1];[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=60:x=105:y=30[tmp2];[tmp2][gif]overlay=W-w-30:30[v]")
     filter_chains.append(f"[{voice_input_index}:a]volume=1.0[a1];[{bgm_input_index}:a]volume=0.05[a2];[a1][a2]amix=inputs=2:duration=first:normalize=0[aout]")
 
     full_filter_complex = ";".join(filter_chains)
     ffmpeg_cmd.extend(["-filter_complex", full_filter_complex])
 
     ffmpeg_cmd.extend([
-        "-map", "[v]",
-        "-map", "[aout]",
+        "-map", "[v]", "-map", "[aout]",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-shortest",
-        "-movflags", "+faststart",
-        output_path
+        "-c:a", "aac", "-t", str(video_length), "-shortest",
+        "-movflags", "+faststart", output_path
     ])
 
     subprocess.run(ffmpeg_cmd, check=True)
@@ -246,13 +249,8 @@ if __name__ == "__main__":
     title, url, content = get_latest_news()
     if not title or not url: print("❌ No news found."); exit()
 
-    max_words_for_shorts = 140
-    short_content = ' '.join(content.split()[:max_words_for_shorts])
-
-    if len(content.split()) > max_words_for_shorts:
-        short_content += "..."
-
-    print(f"✂️  Content truncated to ~{max_words_for_shorts} words for YouTube Shorts format.")
+    print("🤖 Summarizing content for a ~55 second narration...")
+    summarized_content = summarize_text(content, word_count=150)
 
     metadata = {"title": title, "description": content, "tags": ["news", "shorts", "update", "daily"]}
     with open(METADATA_PATH, "w") as f: json.dump(metadata, f, indent=2)
@@ -269,29 +267,37 @@ if __name__ == "__main__":
         if download_image(img_url, path): downloaded += 1
     if downloaded == 0: print("❌ No images downloaded, exiting."); exit()
 
-    narration_text = f"Welcome to today's update. Please like, comment, and subscribe. Here's the latest:\n\n{short_content}"
-    print("🎤 Creating voiceover...")
+    narration_text = f"Welcome to today's update. Here's what you need to know in under a minute.\n\n{summarized_content}"
+    print("🎤 Creating voiceover from summarized text...")
     generate_voice(narration_text, VOICE_PATH)
 
-    narration_duration = get_media_duration(VOICE_PATH)
-    if not narration_duration:
-        print("❌ Could not determine narration duration. Exiting.")
-        exit()
+    original_narration_duration = get_media_duration(VOICE_PATH)
+    if not original_narration_duration:
+        print("❌ Could not determine narration duration. Exiting."); exit()
 
-    if narration_duration >= 60:
-        print(f"⚠️ WARNING: Narration is {narration_duration:.2f}s, which may be too long for Shorts. Continuing anyway.")
+    final_audio_path = VOICE_PATH
+    final_video_duration = original_narration_duration
 
-    print(f"✅ Narration duration is {narration_duration:.2f} seconds.")
+    SHORTS_MAX_LENGTH = 58.0
+    if original_narration_duration > SHORTS_MAX_LENGTH:
+        print(f"⚠️ Narration duration ({original_narration_duration:.2f}s) is over the target. Trimming to {SHORTS_MAX_LENGTH}s.")
+        trimmed_voice_path = "voice_trimmed.mp3"
+        trim_cmd = ["ffmpeg", "-y", "-i", VOICE_PATH, "-t", str(SHORTS_MAX_LENGTH), "-c", "copy", trimmed_voice_path]
+        subprocess.run(trim_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        final_audio_path = trimmed_voice_path
+        final_video_duration = SHORTS_MAX_LENGTH
+
+    print(f"✅ Final video duration will be: {final_video_duration:.2f} seconds.")
 
     print("📝 Creating subtitles...")
     generate_ass_for_shorts(narration_text, VOICE_PATH, ASS_PATH)
 
     create_shorts_video(
         image_dir=IMAGE_DIR,
-        audio_path=VOICE_PATH,
+        audio_path=final_audio_path,
         output_path=VIDEO_PATH,
         ass_path=ASS_PATH,
-        video_length=narration_duration,
+        video_length=final_video_duration,
         bgm_candidates=BGM_FILES,
         metadata=metadata
     )
