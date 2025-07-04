@@ -17,7 +17,7 @@ GNEWS_API_KEY = os.getenv("GNEWS_KEY")
 GNEWS_API_ENDPOINT = "https://gnews.io/api/v4/top-headlines"
 IMAGE_DIR = "images"
 VOICE_PATH = "voice.mp3"
-VIDEO_PATH = "final_content_shorts.mp4"
+VIDEO_PATH = "final_content_SHORTS.mp4"
 ASS_PATH = "subtitles.ass"
 METADATA_PATH = "video_metadata.json"
 IMAGE_COUNT = 10
@@ -35,8 +35,8 @@ def cleanup():
     print("🧹 Cleaning up previous run artifacts...")
     items_to_delete = (
         "images", "video_slides", "slides.txt", "subtitles.ass",
-        "video_metadata.json", "voice_trimmed.mp3", "voice_trimmed.mp3",
-        "final_content_shorts.mp4", "final_news.mp4", VIDEO_PATH
+        "video_metadata.json", "voice.mp3", "voice_trimmed.mp3",
+        "final_content.mp4", "final_news.mp4", VIDEO_PATH
     )
     for item in items_to_delete:
         try:
@@ -70,8 +70,8 @@ def summarize_text(text_to_summarize, word_count=150):
     """
     print(f"🤖 Summarizing text to ~{word_count} words...")
 
-    # This is a placeholder for the actual summarization logic.
-    # In a real application, you would replace this with an API call to a service like Google's Gemini API.
+    # Placeholder for actual AI summarization. For now, it truncates.
+    # To get true AI summarization, integrate the Gemini API here.
     words = text_to_summarize.split()
     summary = ' '.join(words[:word_count])
     if len(words) > word_count:
@@ -144,46 +144,35 @@ def generate_voice(text, out_path):
     print(f"✅ Voiceover saved: {out_path}")
 
 def generate_ass_for_shorts(text, audio_path, ass_path):
-    """MODIFIED to generate subtitles in 3-line blocks."""
-    print("📝 Generating 3-line styled subtitles for Shorts (9:16)...")
-    audio = AudioSegment.from_file(audio_path)
-    duration = len(audio) / 1000.0
-
-    # First, wrap the text into individual lines suitable for a vertical screen
+    """Generates subtitles with larger side margins for mobile safe area."""
+    print("📝 Generating styled subtitles for Shorts (9:16)...")
+    audio = AudioSegment.from_file(audio_path); duration = len(audio) / 1000.0
     lines = textwrap.wrap(text, width=35)
-
-    # Then, group these lines into chunks of 3
     three_line_groups = [lines[i:i + 3] for i in range(0, len(lines), 3)]
-
     if not three_line_groups:
-        print("⚠️ No text to generate subtitles for.")
-        return
-
-    # Calculate the duration each 3-line block should be on screen
+        print("⚠️ No text to generate subtitles for."); return
     duration_per_group = duration / len(three_line_groups)
 
     def fmt_time(seconds):
         h = int(seconds // 3600); m = int((seconds % 3600) // 60); s = int(seconds % 60)
         cs = int((seconds - int(seconds)) * 100); return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-    header = f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,70,&H0000FFFF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,100,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    # MODIFICATION: Increased MarginL and MarginR from 10 to 60 for safe area
+    header = f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,96,&H0000FFFF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2,0,2,60,60,100,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 
     dialogue_lines = []
     for i, group in enumerate(three_line_groups):
         start_time = fmt_time(i * duration_per_group)
         end_time = fmt_time((i + 1) * duration_per_group)
-        # Join the lines with the .ass newline character '\N' to create a multi-line block
         text_block = "\\N".join(group)
-        dialogue_lines.append(
-            f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text_block}"
-        )
+        dialogue_lines.append(f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text_block}")
 
     dialogues = "\n".join(dialogue_lines)
     with open(ass_path, "w") as f: f.write(header + dialogues)
     print(f"✅ Subtitles created.")
 
 def create_shorts_video(image_dir, audio_path, output_path, ass_path, video_length, bgm_candidates, metadata):
-    """Creates a YouTube Short (9:16) with dynamic cropping and overlays."""
+    """Creates a YouTube Short (9:16) with overlays positioned in the safe area."""
     print("🎞 Rendering YouTube Short video...")
     images = sorted(Path(image_dir).glob("*"))
     if not images:
@@ -225,7 +214,17 @@ def create_shorts_video(image_dir, audio_path, output_path, ass_path, video_leng
     filter_chains.append(f"[slides_raw]ass='{Path(ass_path).as_posix()}',format=yuv420p[subtitled_slides]")
     filter_chains.append(f"[{gif_input_index}:v]scale=190:50[gif]")
     filter_chains.append(f"[{logo_input_index}:v]scale=60:60[logo]")
-    filter_chains.append(f"[subtitled_slides][logo]overlay=30:30[tmp1];[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=60:x=105:y=30[tmp2];[tmp2][gif]overlay=W-w-30:30[v]")
+
+    # MODIFICATION: Changed overlay and drawtext coordinates for mobile safe area
+    filter_chains.append(
+        # Place the logo at x=90, y=90 (further from the corner)
+        f"[subtitled_slides][logo]overlay=90:90[tmp1];"
+        # Place the text next to the new logo position (x=90 + 60px width + 15px padding = 165)
+        f"[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=60:x=165:y=90[tmp2];"
+        # Place the GIF further from the top-right corner
+        f"[tmp2][gif]overlay=W-w-90:90[v]"
+    )
+
     filter_chains.append(f"[{voice_input_index}:a]volume=1.0[a1];[{bgm_input_index}:a]volume=0.05[a2];[a1][a2]amix=inputs=2:duration=first:normalize=0[aout]")
 
     full_filter_complex = ";".join(filter_chains)
