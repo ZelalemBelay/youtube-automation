@@ -8,7 +8,7 @@ on:
   push:
 
 jobs:
-  Build-Video-THEN-Upload-to-YouTube:
+  Build-Video-Upload-Youtube:
     runs-on: ubuntu-latest
 
     steps:
@@ -66,6 +66,10 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
         run: |
           python .github/workflows/create_news_video.py
+
+      - name: 🎬 Create final Video with intro
+        run: |
+          python .github/workflows/merge_intro_content.py
 
       - name: List files to debug
         run: ls -R
