@@ -25,6 +25,7 @@ FONT_TEXT = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
 BGM_FILES = ["./assets/bkg1.mp3", "./assets/bkg2.mp3"]
 LOGO_FILE = "assets/icon.png"
 LIKE_FILE = "assets/like.gif"
+INTRO_FILE = "assets/intro.mp4"
 SKIP_DOMAINS = [
     "washingtonpost.com", "navigacloud.com", "redlakenationnews.com",
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
@@ -146,25 +147,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f.write(header + dialogues)
     print(f"✅ Subtitles created.")
 
-def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_length, bgm_candidates, metadata):
+def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, total_duration, bgm_candidates, metadata):
     images = sorted(Path(image_dir).glob("*"))
     if not images:
         print("❌ No images found.")
         return
 
-    image_duration = 5
-    total_slides = int(video_length // image_duration)
-    looped_images = [images[i % len(images)] for i in range(total_slides)]
+    duration_per_slide = 5
+    num_slides = total_duration // duration_per_slide
+    looped_images = [images[i % len(images)] for i in range(num_slides)]
 
     slide_dir = Path("video_slides")
     slide_dir.mkdir(exist_ok=True)
     slide_paths = []
+
     for i, img in enumerate(looped_images):
         out = slide_dir / f"slide_{i:03d}.mp4"
         subprocess.run([
-            "ffmpeg", "-y", "-loop", "1", "-i", str(img),
-            "-t", str(image_duration),
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+            "ffmpeg", "-y", "-loop", "1", "-t", str(duration_per_slide), "-i", str(img),
+            "-vf", "scale=1920:-2:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out)
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         slide_paths.append(out)
@@ -186,12 +187,9 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
         ffmpeg_cmd += [
             "-i", selected_bgm, "-ignore_loop", "0", "-i", LIKE_FILE, "-loop", "1", "-i", LOGO_FILE,
             "-filter_complex",
-            "[1:a]volume=1.0[a1];"
-            "[2:a]volume=0.05[a2];"
-            "[a1][a2]amix=inputs=2:duration=first:normalize=0[aout];"
+            "[1:a]volume=1.0[a1];[2:a]volume=0.05[a2];[a1][a2]amix=inputs=2:duration=first:normalize=0[aout];"
             "[0:v]ass=subtitles.ass,format=yuv420p[v0];"
-            "[3:v]scale=190:50[gif];"
-            "[4:v]scale=60:60[logo];"
+            "[3:v]scale=190:50[gif];[4:v]scale=60:60[logo];"
             "[v0][logo]overlay=10:10[tmp1];"
             f"[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[tmp2];"
             "[tmp2][gif]overlay=W-w-10:10[v]",
@@ -202,7 +200,6 @@ def create_ffmpeg_video(image_dir, audio_path, output_path, ass_path, video_leng
         ffmpeg_cmd += ["-vf", f"ass={ass_path}", "-map", "0:v:0", "-map", "1:a:0"]
 
     ffmpeg_cmd += [
-        "-t", str(video_length),
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
         "-metadata", f"title={metadata['title']}",
         "-metadata", f"description={metadata['description']}",
@@ -222,14 +219,10 @@ if __name__ == "__main__":
         print("❌ No news found.")
         exit()
 
-    VIDEO_TITLE = title
-    VIDEO_DESCRIPTION = content[:800]
-    VIDEO_TAGS = ["news", "USA", "cnn", "trump", "update", "daily"]
-
     metadata = {
-        "title": VIDEO_TITLE,
-        "description": VIDEO_DESCRIPTION,
-        "tags": VIDEO_TAGS
+        "title": title,
+        "description": content[:800],
+        "tags": ["news", "USA", "cnn", "trump", "update", "daily"]
     }
 
     with open(METADATA_PATH, "w") as f:
@@ -253,10 +246,22 @@ if __name__ == "__main__":
         exit()
 
     narration_text = f"Welcome to today's update. Please like, comment, and subscribe. Here's the latest:\n\n{content}"
+
+    # Prepend intro video to the final video command
+    subprocess.run(["ffmpeg", "-y", "-i", INTRO_FILE, "-c", "copy", "intro_temp.mp4"])
+
     print("🎤 Creating voiceover...")
     generate_voice(narration_text, VOICE_PATH)
 
     print("📝 Creating subtitles...")
     generate_ass(narration_text, VOICE_PATH, ASS_PATH)
+
+    # Concatenate intro_temp.mp4 with the main video
+    subprocess.run([
+        "ffmpeg", "-y", "-i", "intro_temp.mp4", "-i", VIDEO_PATH,
+        "-filter_complex", "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]",
+        "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "final_video_with_intro.mp4"
+    ])
+    os.remove("intro_temp.mp4") # Clean up temporary file
 
     create_ffmpeg_video(IMAGE_DIR, VOICE_PATH, VIDEO_PATH, ASS_PATH, VIDEO_LENGTH_SECONDS, BGM_FILES, metadata)
