@@ -1,10 +1,10 @@
-name: Daily News Video
+name: Daily News Short Video
 
 on:
   schedule:
-    - cron: '0 13 * * *'  # 8 AM CST (UTC+5)
-    - cron: '0 18 * * *'  # 1 PM CST (UTC+5)
-    - cron: '0 22 * * *'  # 5 PM CST/CDT
+    - cron: '0 14 * * *'  # 9 AM CST (UTC+5)
+    - cron: '0 15 * * *'  # 2 PM CST (UTC+5)
+    - cron: '0 23 * * *'  # 6 PM CST/CDT
   workflow_dispatch:
   push:
 
