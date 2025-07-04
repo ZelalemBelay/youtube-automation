@@ -1,0 +1,85 @@
+name: Daily News Combined Video
+
+on:
+  schedule:
+    - cron: '0 14 * * *'  # 9 AM CST (UTC+5)
+    - cron: '0 15 * * *'  # 2 PM CST (UTC+5)
+    - cron: '0 23 * * *'  # 6 PM CST/CDT
+  workflow_dispatch:
+  push:
+
+jobs:
+  Build-Short-Video-Upload-Youtube:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            requests \
+            pydub \
+            google-cloud-texttospeech \
+            newspaper3k \
+            lxml_html_clean \
+            google-auth \
+            google-auth-oauthlib \
+            google-api-python-client
+            yt-dlp
+
+      - name: 🧰 Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ffmpeg \
+            fonts-noto \
+            fonts-noto-color-emoji \
+            python3-dev \
+            libxml2-dev \
+            libxslt-dev \
+            libjpeg-dev \
+            zlib1g-dev \
+            libsndfile1 \
+            poppler-utils \
+            libffi-dev \
+            build-essential
+
+      - name: 📁 Check assets directory
+        run: |
+          ls assets || echo "⚠️ Warning: 'assets' folder or its files might be missing"
+
+      - name: 🎬 Run video generation
+        env:
+          GCP_API_KEY: ${{ secrets.GCP_API_KEY }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
+          GSEARCH_CSE_ID: ${{ secrets.GSEARCH_CSE_ID }}
+
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+        run: |
+          python .github/workflows/create_combined_news.py
+
+      - name: 🎬 Create final Video with intro
+        run: |
+          python .github/workflows/merge_intro_combined_content.py
+
+      - name: List files to debug
+        run: ls -R
+
+      - name: 🎬 Upload to YouTube
+        env:
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+        run: |
+          python .github/workflows/upload_video_combined.py
