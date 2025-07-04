@@ -152,16 +152,18 @@ def create_content_video(image_dir, audio_path, output_path, ass_path, video_len
 
     image_duration = 5
     num_slides = int(video_length // image_duration) + 1
+
+    # --- DEBUGGING: Print calculated values ---
+    print(f"DEBUG: video_length received by function: {video_length:.2f}s")
+    print(f"DEBUG: num_slides calculated: {num_slides}")
+
     looped_images = [images[i % len(images)] for i in range(num_slides)]
 
-    # --- Build a single, robust FFMPEG command ---
     ffmpeg_cmd = ["ffmpeg", "-y"]
 
-    # 1. Add all images as looped inputs
-    for img_path in looped_images:
+    for i, img_path in enumerate(looped_images):
         ffmpeg_cmd.extend(["-loop", "1", "-t", str(image_duration), "-i", str(img_path)])
 
-    # 2. Add other inputs and keep track of their index
     current_index = len(looped_images)
 
     voice_input_index = current_index
@@ -177,57 +179,37 @@ def create_content_video(image_dir, audio_path, output_path, ass_path, video_len
     logo_input_index = current_index
     ffmpeg_cmd.extend(["-loop", "1", "-i", LOGO_FILE]); current_index += 1
 
-    # 3. Build the complex filter graph string
     filter_chains = []
     processed_slide_streams = []
 
-    # FIX: Create a filter chain for each image to scale and pad it to 1920x1080 first
     for i in range(num_slides):
         input_stream = f"[{i}:v]"
         output_stream_name = f"[v{i}]"
-
         scale_pad_filter = f"{input_stream}scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1{output_stream_name}"
-
         filter_chains.append(scale_pad_filter)
         processed_slide_streams.append(output_stream_name)
 
-    # Chain 2: Concatenate the now uniformly-sized slide streams
     concat_inputs = "".join(processed_slide_streams)
-    filter_chains.append(
-        f"{concat_inputs}concat=n={num_slides}:v=1:a=0[slides_raw]"
-    )
-
-    # Chain 3: Apply subtitles
+    filter_chains.append(f"{concat_inputs}concat=n={num_slides}:v=1:a=0[slides_raw]")
     filter_chains.append(f"[slides_raw]ass='{Path(ass_path).as_posix()}',format=yuv420p[subtitled_slides]")
-
-    # Chain 4: Prepare overlays
     filter_chains.append(f"[{gif_input_index}:v]scale=190:50[gif]")
     filter_chains.append(f"[{logo_input_index}:v]scale=60:60[logo]")
+    filter_chains.append(f"[subtitled_slides][logo]overlay=10:10[tmp1];[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[tmp2];[tmp2][gif]overlay=W-w-10:10[v]")
+    filter_chains.append(f"[{voice_input_index}:a]volume=1.0[a1];[{bgm_input_index}:a]volume=0.05[a2];[a1][a2]amix=inputs=2:duration=first:normalize=0[aout]")
 
-    # Chain 5: Apply overlays
-    filter_chains.append(
-        f"[subtitled_slides][logo]overlay=10:10[tmp1];"
-        f"[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[tmp2];"
-        f"[tmp2][gif]overlay=W-w-10:10[v]"
-    )
-
-    # Chain 6: Prepare and mix audio
-    filter_chains.append(
-        f"[{voice_input_index}:a]volume=1.0[a1];"
-        f"[{bgm_input_index}:a]volume=0.05[a2];"
-        f"[a1][a2]amix=inputs=2:duration=first:normalize=0[aout]"
-    )
-
-    # 4. Combine filter chains and add to the command
     full_filter_complex = ";".join(filter_chains)
     ffmpeg_cmd.extend(["-filter_complex", full_filter_complex])
 
-    # 5. Add mapping and final output options
+    # Define a hard limit as a failsafe, slightly longer than the narration
+    hard_limit_duration = str(video_length + 5)
+
     ffmpeg_cmd.extend([
         "-map", "[v]",
         "-map", "[aout]",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-c:a", "aac",
+        # FAILSAFE: Use -t to set a hard duration limit for the output
+        "-t", hard_limit_duration,
         "-shortest",
         "-movflags", "+faststart",
         "-metadata", f"title={metadata['title']}",
@@ -236,7 +218,14 @@ def create_content_video(image_dir, audio_path, output_path, ass_path, video_len
         output_path
     ])
 
-    # 6. Run the command
+    # --- DEBUGGING: Print the final command before executing ---
+    print("---")
+    print("DEBUG: Final FFmpeg command to be executed:")
+    # Use shlex.quote for better readability and safety if paths had spaces
+    # For simple printing, ' '.join is fine.
+    print(' '.join(f'"{arg}"' if ' ' in arg else arg for arg in ffmpeg_cmd))
+    print("---")
+
     subprocess.run(ffmpeg_cmd, check=True)
     print(f"✅ Content video saved: {output_path}")
 
