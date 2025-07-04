@@ -7,7 +7,7 @@ from google.oauth2.credentials import Credentials
 # --- Configuration ---
 METADATA_FILE = "video_metadata.json"
 # This should be the final merged video file ready for upload
-VIDEO_FILE_TO_UPLOAD = "final_news_shorts.mp4"
+VIDEO_FILE_TO_UPLOAD = "final_content_shorts.mp4"
 
 # Load YouTube OAuth credentials from environment
 client_id = os.environ['YT_CLIENT_ID']
