@@ -315,10 +315,9 @@ def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candid
 
     num_visual_inputs = len(input_streams)
 
-    # UPDATED: Loop the background music at the input level for reliability
     ffmpeg_cmd.extend([
         "-i", audio_path,
-        "-stream_loop", "-1", "-i", random.choice(bgm_candidates), # Loops BGM indefinitely
+        "-stream_loop", "-1", "-i", random.choice(bgm_candidates),
         "-ignore_loop", "0", "-i", LIKE_FILE,
         "-loop", "1", "-i", LOGO_FILE
     ])
@@ -336,14 +335,13 @@ def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candid
     filter_chains.append(f"[{logo_input_idx}:v]scale=60:60[logo]")
     filter_chains.append(f"[subtitled_video][logo]overlay=10:10[tmp1];[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[tmp2];[tmp2][gif]overlay=W-w-10:10[v]")
 
-    # UPDATED: Simplified audio filter chain without 'aloop'
     filter_chains.append(f"[{voice_input_idx}:a]volume=1.0[a1];[{bgm_input_idx}:a]volume=0.05[a2];[a1][a2]amix=inputs=2:duration=first[aout]")
 
     ffmpeg_cmd.extend([
         "-filter_complex", ";".join(filter_chains),
         "-map", "[v]", "-map", "[aout]",
         "-c:v", "libx264", "-c:a", "aac", "-b:a", "192k",
-        "-t", str(narration_duration), # This will now be respected
+        "-t", str(narration_duration),
         "-movflags", "+faststart",
         "-metadata", f"title={metadata['title']}",
         "-metadata", f"description={metadata['description']}",
@@ -392,16 +390,14 @@ if __name__ == "__main__":
                     img_path = Path(IMAGE_DIR) / f"story{i}_img{j}{safe_suffix}"
 
                     if download_asset(img_url, img_path):
-                        # UPDATED: Validate the image file after downloading
                         try:
                             with Image.open(img_path) as img:
-                                img.verify() # Check if the file is a valid image
+                                img.verify()
                             print(f"    ✅ Valid image downloaded: {img_path}")
                             story['images'].append(str(img_path))
                         except Exception as e:
-                            # If Pillow verification fails, it's not a real image
                             print(f"    ❌ Invalid image file from {img_url}. Deleting. Error: {e}")
-                            os.remove(img_path) # Delete the bad file
+                            os.remove(img_path)
                 except Exception as e:
                     print(f"    ⚠️ Error processing image URL {img_url}: {e}")
 
@@ -422,6 +418,16 @@ if __name__ == "__main__":
     print("\n✅ Saved consolidated video metadata to video_metadata.json")
 
     generate_voice(full_narration_text, VOICE_PATH)
+
+    # --- ADDED: Log the expected video length ---
+    if os.path.exists(VOICE_PATH):
+        duration_in_seconds = get_media_duration(VOICE_PATH)
+        if duration_in_seconds:
+            minutes = int(duration_in_seconds // 60)
+            seconds = int(duration_in_seconds % 60)
+            print(f"🔊 Voiceover audio created. Expected video length: {minutes} minutes and {seconds} seconds.")
+    # --- END OF ADDITION ---
+
     generate_ass(full_narration_text, VOICE_PATH, ASS_PATH)
 
     if os.path.exists(VOICE_PATH):

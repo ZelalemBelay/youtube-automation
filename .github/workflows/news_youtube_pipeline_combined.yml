@@ -9,7 +9,7 @@ on:
   push:
 
 jobs:
-  Build-Short-Video-Upload-Youtube:
+  Build-Combined-Video-Upload-Youtube:
     runs-on: ubuntu-latest
 
     steps:
