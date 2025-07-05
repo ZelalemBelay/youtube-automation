@@ -53,9 +53,8 @@ jobs:
             libffi-dev \
             build-essential
 
-      - name: 📁 Check assets directory
-        run: |
-          ls assets || echo "⚠️ Warning: 'assets' folder or its files might be missing"
+      - name: List files with sizes to debug
+        run: ls -Rlh
 
       - name: 🎬 Run video generation
         env:
@@ -70,12 +69,15 @@ jobs:
         run: |
           python .github/workflows/create_combined_news.py
 
+      - name: List files with sizes to debug
+        run: ls -Rlh
+
       - name: 🎬 Create final Video with intro
         run: |
           python .github/workflows/merge_intro_combined_content.py
 
-      - name: List files to debug
-        run: ls -R
+      - name: List files with sizes to debug
+        run: ls -Rlh
 
       - name: 🎬 Upload to YouTube
         env:
