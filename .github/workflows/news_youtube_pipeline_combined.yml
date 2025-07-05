@@ -2,8 +2,8 @@ name: Daily News Combined Video
 
 on:
   schedule:
-    - cron: '0 14 * * *'  # 9 AM CST (UTC+5)
-    - cron: '0 19 * * *'  # 2 PM CST (UTC+5)
+    - cron: '0 14 * * *'  # 9 AM CST (UTC-5)
+    - cron: '0 19 * * *'  # 2 PM CST (UTC-5)
     - cron: '0 23 * * *'  # 6 PM CST/CDT
   workflow_dispatch:
   push:
@@ -40,7 +40,7 @@ jobs:
             libcairo2-dev \
             pkg-config
 
-      - name: 📦 Install Python dependencies
+      - name: 📦 Install base Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install \
@@ -53,9 +53,13 @@ jobs:
             google-auth-oauthlib \
             google-api-python-client \
             yt-dlp \
-            cairosvg \
             google-generativeai
 
+      - name: 📦 Install Cairo connector for Python
+        run: pip install cairocffi
+
+      - name: 📦 Install Cairosvg
+        run: pip install cairosvg
 
       - name: List files with sizes to debug
         run: ls -Rlha
@@ -66,10 +70,7 @@ jobs:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
           GSEARCH_CSE_ID: ${{ secrets.GSEARCH_CSE_ID }}
-
-          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
           python .github/workflows/create_combined_news.py
 
