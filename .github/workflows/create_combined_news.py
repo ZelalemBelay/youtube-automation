@@ -1,6 +1,5 @@
 import os
 import requests
-import mimetypes
 import subprocess
 import random
 import textwrap
@@ -12,6 +11,7 @@ from google.cloud import texttospeech
 from google.oauth2 import service_account
 import shutil
 from googleapiclient.discovery import build
+from PIL import Image # For image validation
 
 # === CONFIG ===
 GNEWS_API_KEY = os.getenv("GNEWS_KEY")
@@ -32,8 +32,7 @@ SKIP_DOMAINS = [
     "washingtonpost.com", "navigacloud.com", "redlakenationnews.com",
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
 ]
-# Path to a cookies file to avoid bot detection in automated environments.
-YT_DLP_COOKIES_FILE = "cookies.txt"
+cookies_file_path = "cookies.txt"
 
 
 def cleanup():
@@ -139,7 +138,6 @@ def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
     youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
     try:
-        # CORRECTED LINE: Use the lowercase 'youtube' variable and access the 'search' resource.
         search_response = youtube.search().list(
             q=f"{query} news report",
             part='snippet',
@@ -165,7 +163,7 @@ def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
 
             yt_dlp_command = [
                 "yt-dlp",
-                "--quiet",
+                "--quiet", "--no-warnings",
                 "-f", "bestvideo[ext=mp4]/best[ext=mp4]",
                 "--no-audio-multistreams",
                 "--download-sections", f"*0-{duration}",
@@ -174,11 +172,10 @@ def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
                 video_url
             ]
 
-            # Add the cookies argument ONLY if the file exists.
-            if os.path.exists(YT_DLP_COOKIES_FILE):
-                yt_dlp_command.extend(["--cookies", YT_DLP_COOKIES_FILE])
+            if os.path.exists(cookies_file_path):
+                yt_dlp_command.extend(["--cookies", cookies_file_path])
             else:
-                print(f"    ⚠️ Cookies file '{YT_DLP_COOKIES_FILE}' not found. Downloads may fail.")
+                print(f"    ⚠️ Cookies file '{cookies_file_path}' not found. Downloads may fail.")
 
             try:
                 subprocess.run(yt_dlp_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -318,7 +315,7 @@ def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candid
 
     num_visual_inputs = len(input_streams)
 
-    # Loop the background music at the input level for reliability
+    # UPDATED: Loop the background music at the input level for reliability
     ffmpeg_cmd.extend([
         "-i", audio_path,
         "-stream_loop", "-1", "-i", random.choice(bgm_candidates), # Loops BGM indefinitely
@@ -339,8 +336,7 @@ def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candid
     filter_chains.append(f"[{logo_input_idx}:v]scale=60:60[logo]")
     filter_chains.append(f"[subtitled_video][logo]overlay=10:10[tmp1];[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[tmp2];[tmp2][gif]overlay=W-w-10:10[v]")
 
-    # Simplified audio filter chain without 'aloop'
-    # 'amix=duration=first' will now reliably cut off the infinitely looped BGM when the narration ends.
+    # UPDATED: Simplified audio filter chain without 'aloop'
     filter_chains.append(f"[{voice_input_idx}:a]volume=1.0[a1];[{bgm_input_idx}:a]volume=0.05[a2];[a1][a2]amix=inputs=2:duration=first[aout]")
 
     ffmpeg_cmd.extend([
@@ -394,8 +390,18 @@ if __name__ == "__main__":
                     safe_suffix = "".join(c for c in Path(img_url).suffix.split('?')[0] if c.isalnum() or c == '.')
                     if not safe_suffix: safe_suffix = ".jpg"
                     img_path = Path(IMAGE_DIR) / f"story{i}_img{j}{safe_suffix}"
+
                     if download_asset(img_url, img_path):
-                        story['images'].append(str(img_path))
+                        # UPDATED: Validate the image file after downloading
+                        try:
+                            with Image.open(img_path) as img:
+                                img.verify() # Check if the file is a valid image
+                            print(f"    ✅ Valid image downloaded: {img_path}")
+                            story['images'].append(str(img_path))
+                        except Exception as e:
+                            # If Pillow verification fails, it's not a real image
+                            print(f"    ❌ Invalid image file from {img_url}. Deleting. Error: {e}")
+                            os.remove(img_path) # Delete the bad file
                 except Exception as e:
                     print(f"    ⚠️ Error processing image URL {img_url}: {e}")
 
