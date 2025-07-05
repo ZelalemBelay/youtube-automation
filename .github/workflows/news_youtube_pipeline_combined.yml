@@ -21,22 +21,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 📦 Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install \
-            requests \
-            pydub \
-            google-cloud-texttospeech \
-            newspaper3k \
-            lxml_html_clean \
-            google-auth \
-            google-auth-oauthlib \
-            google-api-python-client \
-            yt-dlp \
-            cairosvg \
-            google-generativeai
-
       - name: 🧰 Install system dependencies
         run: |
           sudo apt-get update
@@ -55,6 +39,23 @@ jobs:
             build-essential \
             libcairo2-dev \
             pkg-config
+
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            requests \
+            pydub \
+            google-cloud-texttospeech \
+            newspaper3k \
+            lxml_html_clean \
+            google-auth \
+            google-auth-oauthlib \
+            google-api-python-client \
+            yt-dlp \
+            cairosvg \
+            google-generativeai
+
 
       - name: List files with sizes to debug
         run: ls -Rlha
