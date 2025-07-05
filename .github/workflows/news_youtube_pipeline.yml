@@ -6,7 +6,7 @@ on:
     - cron: '0 18 * * *'  # 1 PM CST (UTC+5)
     - cron: '0 22 * * *'  # 5 PM CST/CDT
   workflow_dispatch:
-  push:
+#  push:
 
 jobs:
   Build-Video-Upload-Youtube:

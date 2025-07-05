@@ -11,7 +11,6 @@ from newspaper import Article
 from google.cloud import texttospeech
 from google.oauth2 import service_account
 import shutil
-# NEW: Import for YouTube API search
 from googleapiclient.discovery import build
 
 # === CONFIG ===
@@ -33,6 +32,8 @@ SKIP_DOMAINS = [
     "washingtonpost.com", "navigacloud.com", "redlakenationnews.com",
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
 ]
+# NEW: Specify the browser for yt-dlp to use for cookies to avoid bot detection
+YT_DLP_BROWSER = "chrome"  # Change to "firefox", "edge", "brave", etc., if needed
 
 
 def cleanup():
@@ -135,7 +136,6 @@ def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
         print("    ⚠️ YOUTUBE_API_KEY environment variable not set. Skipping video search.")
         return []
 
-    # The variable is 'youtube' (lowercase)
     youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
     try:
@@ -145,7 +145,7 @@ def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
             part='snippet',
             maxResults=5,
             type='video',
-            videoDuration='short' # Prefers videos under 4 minutes
+            videoDuration='short'
         ).execute()
 
         video_ids = [item['id']['videoId'] for item in search_response.get('items', [])]
@@ -158,18 +158,19 @@ def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
             if len(downloaded_clips) >= num_clips:
                 break
 
-            # Using a more robust URL for yt-dlp
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             clip_path = os.path.join(download_dir, f"clip_{query.replace(' ', '_')[:20]}_{i}.mp4")
 
             print(f"    📥 Downloading silent clip from {video_url}...")
-            # Use yt-dlp to download a silent, 12-second clip
+
+            # UPDATED: Added --cookies-from-browser to avoid YouTube's bot detection
             yt_dlp_command = [
                 "yt-dlp",
+                "--cookies-from-browser", YT_DLP_BROWSER,
                 "--quiet",
-                "-f", "bestvideo[ext=mp4]/best[ext=mp4]", # Get best video-only stream
-                "--no-audio-multistreams", # Ensure no audio
-                "--download-sections", f"*0-{duration}", # Download first {duration} seconds
+                "-f", "bestvideo[ext=mp4]/best[ext=mp4]",
+                "--no-audio-multistreams",
+                "--download-sections", f"*0-{duration}",
                 "--force-keyframes-at-cuts",
                 "-o", clip_path,
                 video_url
@@ -181,14 +182,9 @@ def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
                     downloaded_clips.append(clip_path)
                     print(f"    ✅ Downloaded clip: {clip_path}")
             except subprocess.CalledProcessError as e:
-                # Provide more helpful error from yt-dlp
                 error_output = e.stderr.decode()
                 print(f"    ❌ yt-dlp failed for {video_url}.")
-                if "HTTP Error 410" in error_output:
-                    print("       This might be due to an expired link format. Retrying may not help.")
-                else:
-                    print(f"       Error: {error_output}")
-
+                print(f"       Error: {error_output}")
 
         return downloaded_clips
 
@@ -203,7 +199,6 @@ def generate_voice(text, out_path):
         creds = service_account.Credentials.from_service_account_info(service_account_info)
         client = texttospeech.TextToSpeechClient(credentials=creds)
 
-        # Split text into manageable chunks for the API
         max_bytes = 4900
         chunks = []
         current_chunk = ""
@@ -224,7 +219,7 @@ def generate_voice(text, out_path):
             voice = texttospeech.VoiceSelectionParams(language_code="en-US", name="en-US-Wavenet-D")
             audio_config = texttospeech.AudioConfig(
                 audio_encoding=texttospeech.AudioEncoding.MP3,
-                speaking_rate=0.95 # Slightly slower for a more deliberate news pace
+                speaking_rate=0.95
             )
             response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
             full_audio += response.audio_content
@@ -235,13 +230,11 @@ def generate_voice(text, out_path):
     except Exception as e:
         print(f"❌ Failed to generate voice: {e}")
 
-
 def generate_ass(text, audio_path, ass_path):
     print("📝 Generating styled subtitles (optimized)...")
     try:
         audio = AudioSegment.from_file(audio_path)
         duration = len(audio) / 1000.0
-        # Improved wrapping for better line breaks
         wrapped_text = textwrap.fill(text, width=40)
         lines = wrapped_text.splitlines()
 
@@ -255,7 +248,6 @@ def generate_ass(text, audio_path, ass_path):
             cs = int((seconds - int(seconds)) * 100)
             return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-        # A more readable and robust style
         header = (
             "[Script Info]\n"
             "ScriptType: v4.00+\n"
@@ -279,7 +271,6 @@ def generate_ass(text, audio_path, ass_path):
     except Exception as e:
         print(f"❌ Failed to generate subtitles: {e}")
 
-
 def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candidates, metadata):
     print("🎞 Rendering long-form video...")
 
@@ -299,12 +290,11 @@ def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candid
     ffmpeg_cmd = ["ffmpeg", "-y"]
     input_streams = []
     total_visual_duration = 0
-    asset_duration_img = 4 # Default duration for images
+    asset_duration_img = 4
 
-    # Loop through available assets until narration is covered
     final_asset_list = []
     while total_visual_duration < narration_duration:
-        if not visual_assets: # Prevent infinite loop if assets run out
+        if not visual_assets:
             break
         final_asset_list.extend(visual_assets)
         for asset_path in visual_assets:
@@ -314,12 +304,11 @@ def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candid
                 clip_duration = get_media_duration(asset_path) or 0
                 total_visual_duration += clip_duration
 
-    # Prepare inputs for FFmpeg
     for i, asset_path in enumerate(final_asset_list):
         asset_path_obj = Path(asset_path)
         if asset_path_obj.suffix.lower() in ['.jpg', '.jpeg', '.png', '.webp']:
             ffmpeg_cmd.extend(["-loop", "1", "-t", str(asset_duration_img), "-i", str(asset_path_obj)])
-        else: # It's a video
+        else:
             ffmpeg_cmd.extend(["-i", str(asset_path_obj)])
         input_streams.append(f"[{i}:v]")
 
@@ -327,7 +316,6 @@ def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candid
     ffmpeg_cmd.extend(["-i", audio_path, "-i", random.choice(bgm_candidates), "-ignore_loop", "0", "-i", LIKE_FILE, "-loop", "1", "-i", LOGO_FILE])
     voice_input_idx, bgm_input_idx, gif_input_idx, logo_input_idx = num_visual_inputs, num_visual_inputs + 1, num_visual_inputs + 2, num_visual_inputs + 3
 
-    # Build the complex filter graph
     filter_chains = []
     scaled_streams = []
     for i in range(num_visual_inputs):
@@ -355,7 +343,7 @@ def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candid
 
     print("---")
     print("DEBUG: Executing FFmpeg command...")
-    # print(' '.join(f'"{arg}"' if ' ' in arg else arg for arg in ffmpeg_cmd)) # Uncomment for deep debugging
+    # print(' '.join(f'"{arg}"' if ' ' in arg else arg for arg in ffmpeg_cmd))
     print("---")
 
     try:
@@ -364,7 +352,6 @@ def create_longform_video(stories, audio_path, output_path, ass_path, bgm_candid
     except subprocess.CalledProcessError as e:
         print("❌ FFmpeg rendering failed.")
         print(f"Error: {e}")
-
 
 if __name__ == "__main__":
     cleanup()
@@ -390,7 +377,6 @@ if __name__ == "__main__":
         if image_urls:
             for j, img_url in enumerate(image_urls):
                 try:
-                    # Sanitize suffix more reliably
                     safe_suffix = "".join(c for c in Path(img_url).suffix.split('?')[0] if c.isalnum() or c == '.')
                     if not safe_suffix: safe_suffix = ".jpg"
                     img_path = Path(IMAGE_DIR) / f"story{i}_img{j}{safe_suffix}"
@@ -403,13 +389,12 @@ if __name__ == "__main__":
 
     full_narration_text = "".join(all_content_parts)
 
-    # Generate a more concise description
     description_text = " | ".join([s['title'] for s in stories])
     description_text += f"\n\nStay informed with the latest headlines. In this video: {stories[0]['title']}, and more."
 
     metadata = {
         "title": main_title,
-        "description": description_text[:5000], # YouTube description limit
+        "description": description_text[:5000],
         "tags": ["news", "world news", "daily news", "breaking news", "headlines"] + [s['title'].split(' ')[0] for s in stories]
     }
     with open(METADATA_PATH, "w") as f:
