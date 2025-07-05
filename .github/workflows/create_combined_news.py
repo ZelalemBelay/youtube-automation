@@ -1,6 +1,5 @@
 import os
 import requests
-import mimetypes
 import subprocess
 import random
 import textwrap
@@ -32,8 +31,7 @@ SKIP_DOMAINS = [
     "washingtonpost.com", "navigacloud.com", "redlakenationnews.com",
     "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
 ]
-# NEW: Specify the browser for yt-dlp to use for cookies to avoid bot detection
-YT_DLP_BROWSER = "chrome"  # Change to "firefox", "edge", "brave", etc., if needed
+cookies_file_path = "cookies.txt"
 
 
 def cleanup():
@@ -166,8 +164,8 @@ def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
             # UPDATED: Added --cookies-from-browser to avoid YouTube's bot detection
             yt_dlp_command = [
                 "yt-dlp",
-                "--cookies-from-browser", YT_DLP_BROWSER,
-                "--quiet",
+                "--cookies", cookies_file_path,
+                "--quiet", "--no-warnings",
                 "-f", "bestvideo[ext=mp4]/best[ext=mp4]",
                 "--no-audio-multistreams",
                 "--download-sections", f"*0-{duration}",
