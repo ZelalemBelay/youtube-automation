@@ -54,7 +54,7 @@ jobs:
             build-essential
 
       - name: List files with sizes to debug
-        run: ls -Rlh
+        run: ls -Rlha
 
       - name: 🎬 Run video generation
         env:
@@ -70,14 +70,14 @@ jobs:
           python .github/workflows/create_combined_news.py
 
       - name: List files with sizes to debug
-        run: ls -Rlh
+        run: ls -Rlha
 
       - name: 🎬 Create final Video with intro
         run: |
           python .github/workflows/merge_intro_combined_content.py
 
       - name: List files with sizes to debug
-        run: ls -Rlh
+        run: ls -Rlha
 
       - name: 🎬 Upload to YouTube
         env:
