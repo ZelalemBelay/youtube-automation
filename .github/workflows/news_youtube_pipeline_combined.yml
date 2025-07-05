@@ -33,7 +33,8 @@ jobs:
             google-auth \
             google-auth-oauthlib \
             google-api-python-client \
-            yt-dlp
+            yt-dlp\
+            cairosvg
 
       - name: 🧰 Install system dependencies
         run: |
