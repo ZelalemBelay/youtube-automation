@@ -12,6 +12,7 @@ from google.oauth2 import service_account
 import shutil
 from googleapiclient.discovery import build
 from PIL import Image # For image validation
+import cairosvg # <-- ADDED: For SVG to PNG conversion
 
 # === CONFIG ===
 GNEWS_API_KEY = os.getenv("GNEWS_KEY")
@@ -385,19 +386,35 @@ if __name__ == "__main__":
         if image_urls:
             for j, img_url in enumerate(image_urls):
                 try:
+                    # Sanitize suffix to handle URLs with query parameters
                     safe_suffix = "".join(c for c in Path(img_url).suffix.split('?')[0] if c.isalnum() or c == '.')
-                    if not safe_suffix: safe_suffix = ".jpg"
+                    if not safe_suffix: safe_suffix = ".jpg" # Default if no suffix found
                     img_path = Path(IMAGE_DIR) / f"story{i}_img{j}{safe_suffix}"
 
                     if download_asset(img_url, img_path):
+                        final_image_path = str(img_path)
+                        # --- ADDED: SVG to PNG Conversion ---
+                        if final_image_path.endswith(".svg"):
+                            print(f"    🎨 Converting SVG to PNG: {final_image_path}")
+                            png_path = Path(final_image_path).with_suffix(".png")
+                            try:
+                                cairosvg.svg2png(url=final_image_path, write_to=str(png_path))
+                                os.remove(final_image_path) # Clean up original SVG
+                                final_image_path = str(png_path) # Use the new PNG path
+                            except Exception as e:
+                                print(f"    ❌ Failed to convert SVG: {e}")
+                                continue # Skip this image
+
+                        # --- Image Validation Step ---
                         try:
-                            with Image.open(img_path) as img:
+                            with Image.open(final_image_path) as img:
                                 img.verify()
-                            print(f"    ✅ Valid image downloaded: {img_path}")
-                            story['images'].append(str(img_path))
+                            print(f"    ✅ Valid image ready: {final_image_path}")
+                            story['images'].append(final_image_path)
                         except Exception as e:
-                            print(f"    ❌ Invalid image file from {img_url}. Deleting. Error: {e}")
-                            os.remove(img_path)
+                            print(f"    ❌ Invalid or corrupt image file. Deleting. Error: {e}")
+                            if os.path.exists(final_image_path):
+                                os.remove(final_image_path)
                 except Exception as e:
                     print(f"    ⚠️ Error processing image URL {img_url}: {e}")
 
@@ -419,14 +436,12 @@ if __name__ == "__main__":
 
     generate_voice(full_narration_text, VOICE_PATH)
 
-    # --- ADDED: Log the expected video length ---
     if os.path.exists(VOICE_PATH):
         duration_in_seconds = get_media_duration(VOICE_PATH)
         if duration_in_seconds:
             minutes = int(duration_in_seconds // 60)
             seconds = int(duration_in_seconds % 60)
             print(f"🔊 Voiceover audio created. Expected video length: {minutes} minutes and {seconds} seconds.")
-    # --- END OF ADDITION ---
 
     generate_ass(full_narration_text, VOICE_PATH, ASS_PATH)
 
