@@ -52,7 +52,9 @@ jobs:
             libsndfile1 \
             poppler-utils \
             libffi-dev \
-            build-essential
+            build-essential \
+            libcairo2-dev \
+            pkg-config
 
       - name: List files with sizes to debug
         run: ls -Rlha
