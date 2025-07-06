@@ -157,7 +157,7 @@ def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
     if not YOUTUBE_API_KEY: print("    ⚠️ YOUTUBE_API_KEY not set. Skipping video search."); return []
     youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
     try:
-        search_response = Youtube().list(q=f"{query} news report", part='snippet', maxResults=5, type='video', videoDuration='short').execute()
+        search_response = youtube.search().list(q=f"{query} news report", part='snippet', maxResults=5, type='video', videoDuration='short').execute()
         video_ids = [item['id']['videoId'] for item in search_response.get('items', [])]
         if not video_ids: print("    No relevant video clips found."); return []
         downloaded_clips = []
