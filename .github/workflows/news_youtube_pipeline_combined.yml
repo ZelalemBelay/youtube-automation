@@ -79,7 +79,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: final-video
+          name: final-video-content
           path: final_content_combined.mp4
           retention-days: 7
 
@@ -95,7 +95,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: final-video
+          name: final-video-news
           path: final_news_combined.mp4
           retention-days: 7
 
