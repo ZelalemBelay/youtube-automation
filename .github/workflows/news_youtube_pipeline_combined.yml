@@ -6,7 +6,7 @@ on:
     - cron: '0 19 * * *'  # 2 PM CST (UTC-5)
     - cron: '0 23 * * *'  # 6 PM CST/CDT
   workflow_dispatch:
-  push:
+#  push:
 
 jobs:
   Build-Combined-Video-Upload-Youtube:
@@ -75,12 +75,50 @@ jobs:
         run: |
           python .github/workflows/create_combined_news.py
 
+      - name: 📦 Upload Video as an Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-video
+          path: final_content_combined.mp4
+          retention-days: 7
+
+      - name: 🔗 Generate a Preview Link
+        if: success()
+        run: |
+          echo "Uploading final video for a temporary preview link..."
+          # Use curl to upload the file and capture the output link
+          LINK=$(curl --upload-file final_content_combined.mp4 https://transfer.sh/final_content_combined.mp4)
+          echo "================================================================="
+          echo "✅ VIDEO PREVIEW LINK (valid for 14 days):"
+          echo "$LINK"
+          echo "================================================================="
+
       - name: List files with sizes to debug
         run: ls -Rlha
 
       - name: 🎬 Create final Video with intro
         run: |
           python .github/workflows/merge_intro_combined_content.py
+
+      - name: 🔗 Generate a Preview Link
+        if: success()
+        run: |
+          echo "Uploading final video for a temporary preview link..."
+          # Use curl to upload the file and capture the output link
+          LINK=$(curl --upload-file final_content_combined.mp4 https://transfer.sh/final_news_combined.mp4)
+          echo "================================================================="
+          echo "✅ VIDEO PREVIEW LINK (valid for 14 days):"
+          echo "$LINK"
+          echo "================================================================="
+
+      - name: 📦 Upload Video as an Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-video
+          path: final_news_combined.mp4
+          retention-days: 7
 
       - name: List files with sizes to debug
         run: ls -Rlha
