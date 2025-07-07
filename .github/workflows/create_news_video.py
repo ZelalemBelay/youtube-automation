@@ -1,277 +1,351 @@
 import os
+import sys
 import requests
-import mimetypes
 import subprocess
 import random
 import textwrap
 import json
+import re
+import itertools
+import datetime
 from pathlib import Path
 from pydub import AudioSegment
 from newspaper import Article
 from google.cloud import texttospeech
 from google.oauth2 import service_account
 import shutil
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from PIL import Image
+import cairosvg
+import google.generativeai as genai
+import yt_dlp
 
-# === CONFIG ===
-GNEWS_API_KEY = os.getenv("GNEWS_KEY")
-GNEWS_API_ENDPOINT = "https://gnews.io/api/v4/top-headlines"
-IMAGE_DIR = "images"
-VOICE_PATH = "voice.mp3"
-VIDEO_PATH = "final_content.mp4"
-ASS_PATH = "subtitles.ass"
-METADATA_PATH = "video_metadata.json"
-IMAGE_COUNT = 10
-FONT_TEXT = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
-BGM_FILES = ["./assets/bkg1.mp3", "./assets/bkg2.mp3"]
-LOGO_FILE = "assets/icon.png"
-LIKE_FILE = "assets/like.gif"
-SKIP_DOMAINS = [
-    "washingtonpost.com", "navigacloud.com", "redlakenationnews.com",
-    "imengine.public.prod.pdh.navigacloud.com", "arc-anglerfish-washpost-prod-washpost.s3.amazonaws.com"
-]
+# --- Configuration ---
+class Config:
+    """Holds all configuration and validates the environment."""
+    def __init__(self):
+        self.gnews_api_key = os.getenv("GNEWS_KEY")
+        self.youtube_api_key = os.getenv("GCP_API_KEY")
+        self.google_api_key = os.getenv("GCP_API_KEY")
+        self.gcp_sa_key = os.getenv("GCP_SA_KEY")
+        self.gsearch_cse_id = os.getenv("GSEARCH_CSE_ID")
+        self.pexels_api_key = os.getenv("PEXELS_API_KEY")
+        self.validate()
+        if self.google_api_key: genai.configure(api_key=self.google_api_key)
 
+        self.image_dir = Path("images")
+        self.video_clip_dir = Path("videoclips")
+        self.final_video_path = Path("final_news_video.mp4")
+        self.voice_path = Path("voice.mp3")
+        self.ass_path = Path("subtitles.ass")
+        self.images_to_fetch = 8
+        self.youtube_videos_to_fetch = 3
+        self.pexels_videos_to_fetch = 2
+        self.video_clip_duration = 10
+        self.image_duration = 6
+        self.font_text = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
+        self.bgm_files = ["./assets/bkg1.mp3", "./assets/bkg2.mp3"]
+        self.logo_file = Path("assets/icon.png")
+        self.like_file = Path("assets/like.gif")
 
-def cleanup():
+    def validate(self):
+        required = {"GNEWS_KEY": self.gnews_api_key, "GCP_API_KEY": self.google_api_key, "GCP_SA_KEY": self.gcp_sa_key, "GSEARCH_CSE_ID": self.gsearch_cse_id}
+        missing = [k for k, v in required.items() if not v]
+        if missing: print(f"❌ Critical Error: Missing environment variables: {', '.join(missing)}"); sys.exit(1)
+
+# --- Utility Functions ---
+def cleanup(cfg: Config):
     print("🧹 Cleaning up previous run artifacts...")
-    items_to_delete = (
-        "images", "video_slides", "slides.txt", "subtitles.ass",
-        "video_metadata.json", "voice.mp3", "final_content.mp4", "final_news.mp4"
-    )
-    for item in items_to_delete:
-        try:
-            if os.path.exists(item):
-                if os.path.isdir(item):
-                    shutil.rmtree(item)
-                    print(f"  Deleted folder: {item}")
-                else:
-                    os.remove(item)
-                    print(f"  Deleted file: {item}")
-        except OSError as e:
-            print(f"  Error deleting {item}: {e}")
+    shutil.rmtree(cfg.image_dir, ignore_errors=True)
+    shutil.rmtree(cfg.video_clip_dir, ignore_errors=True)
+    for f in [cfg.voice_path, cfg.final_video_path, cfg.ass_path, Path("timeline.mp4")]:
+        f.unlink(missing_ok=True)
 
-def get_media_duration(media_path):
-    """Gets the duration of a video or audio file in seconds using ffprobe."""
-    if not shutil.which("ffprobe"):
-        print("❌ Error: ffprobe is not installed or not in your system's PATH.")
-        return None
-    command = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", media_path
-    ]
+def get_media_duration(media_path: Path) -> float | None:
+    if not shutil.which("ffprobe"): print("❌ Error: ffprobe is not installed."); return None
+    command = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(media_path)]
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=True)
         return float(result.stdout.strip())
-    except Exception as e:
-        print(f"❌ Error getting duration for {media_path}: {e}")
-        return None
+    except Exception: return None
 
-def get_latest_news():
-    params = {"token": GNEWS_API_KEY, "lang": "en", "country": "us", "max": 5}
+# --- Text Processing ---
+def clean_ai_script(text: str) -> str:
+    print("    - Sanitizing AI-generated script for narration...")
+    text = re.sub(r'\[.*?\]', '', text)
+    text = re.sub(r'\(.*?\)', '', text)
+    text = text.replace("Narrator:", "")
+    text = text.replace('*', '')
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        stripped_line = line.strip()
+        if re.match(r'^[A-Z\s]+:$', stripped_line): continue
+        cleaned_lines.append(stripped_line)
+    return "\n".join(filter(None, cleaned_lines))
+
+# --- Core Workflow Functions ---
+def get_top_story(cfg: Config) -> tuple[str, str] | None:
+    print("📰 Fetching top news stories to select one randomly...")
+    params = {"token": cfg.gnews_api_key, "lang": "en", "country": "us", "max": 10}
     try:
-        r = requests.get(GNEWS_API_ENDPOINT, params=params, timeout=10)
+        r = requests.get("https://gnews.io/api/v4/top-headlines", params=params, timeout=10)
         r.raise_for_status()
-        articles = r.json().get("articles", [])
-        if not articles: return None, None, None
-        a = articles[0]
-        title, url = a.get("title", ""), a.get("url", "")
+        articles_data = r.json().get("articles", [])
+        if not articles_data: print("❌ GNews API returned no articles."); return None
+        random.shuffle(articles_data)
+        for article_data in articles_data:
+            try:
+                print(f"  -> Attempting to process: {article_data['title']}")
+                article = Article(article_data['url'])
+                article.download(); article.parse()
+                if not article.text or len(article.text.split()) < 400: continue
+                print("    - Generating detailed script with AI for a ~3 minute video...")
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                prompt = f"Analyze the following news article and expand it into a detailed news script suitable for a 3-minute video narration. Structure it with an introduction, several paragraphs covering key details and context, and a conclusion. Output ONLY the finished, clean script text."
+                response = model.generate_content(prompt + f"\n\n---\n{article.text}\n---")
+                clean_content = clean_ai_script(response.text)
+                if len(clean_content.split()) < 300: continue
+                print(f"✅ Randomly selected story: {article_data['title']}")
+                return article_data['title'], clean_content
+            except Exception as e: print(f"    - Failed to process article. Error: {e}. Trying next.")
+    except Exception as e: print(f"❌ News fetch API error: {e}")
+    print("❌ Could not find a suitable top story to process.")
+    return None
+
+def get_visual_assets(query: str, cfg: Config) -> tuple[list, list]:
+    print(f"🖼️ 📹 Acquiring visual assets for: '{query}'")
+    downloaded_images = []
+    try:
+        img_params = {"key": cfg.google_api_key, "cx": cfg.gsearch_cse_id, "q": query, "searchType": "image", "num": cfg.images_to_fetch}
+        res = requests.get("https://www.googleapis.com/customsearch/v1", params=img_params, timeout=10); res.raise_for_status()
+        image_urls = [item["link"] for item in res.json().get("items", [])]
+        if image_urls:
+            print(f"    - Downloading & sanitizing {len(image_urls)} images...")
+            for i, url in enumerate(image_urls):
+                img_path = None
+                try:
+                    ext = (Path(url.split('?')[0]).suffix or ".jpg")[:5]
+                    if not ext.lower() in ['.jpg', '.jpeg', '.png', '.webp', '.svg']: ext = '.jpg'
+                    img_path = cfg.image_dir / f"img_{i}{ext}"
+                    r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"}); r.raise_for_status()
+                    img_path.write_bytes(r.content)
+                    final_path = img_path
+                    if img_path.suffix.lower() == ".svg":
+                        png_path = img_path.with_suffix(".png")
+                        cairosvg.svg2png(url=str(img_path), write_to=str(png_path)); img_path.unlink(); final_path = png_path
+                    with Image.open(final_path) as img:
+                        rgb_img = img.convert('RGB')
+                        jpeg_path = final_path.with_suffix(".jpg")
+                        rgb_img.save(jpeg_path, "jpeg", quality=95)
+                        if final_path != jpeg_path: final_path.unlink()
+                        downloaded_images.append(str(jpeg_path))
+                except Exception:
+                    if img_path and img_path.exists(): img_path.unlink()
+    except Exception as e: print(f"    - Warning: Image search failed: {e}")
+
+    youtube_videos = search_and_download_youtube_videos(query, cfg)
+    pexels_videos = search_and_download_pexels_videos(query, cfg)
+    return downloaded_images, youtube_videos + pexels_videos
+
+def extract_keywords(title: str) -> str:
+    stop_words = {"a", "an", "the", "and", "or", "in", "on", "for", "with", "is", "are", "was", "were", "of", "to", "at", "by", "it", "from", "as", "after", "before", "how", "what", "why", "today", "live", "updates"}
+    title = re.sub(r'[^\w\s]', '', title.lower())
+    words = title.split()
+    return " ".join([word for word in words if word not in stop_words and len(word) > 3][:4])
+
+def search_and_download_youtube_videos(query: str, cfg: Config) -> list[str]:
+    print(f"    - Searching YouTube for {cfg.youtube_videos_to_fetch} clips...")
+    keywords = extract_keywords(query)
+    search_queries = [f'"{query}" news report', f'"{keywords}" news footage', f'"{keywords}" B-roll']
+    downloaded_clips, processed_ids = [], set()
+    for q in search_queries:
+        if len(downloaded_clips) >= cfg.youtube_videos_to_fetch: break
         try:
-            article = Article(url); article.download(); article.parse(); content = article.text
-        except:
-            content = a.get("description", "") or a.get("content", "")
-        return title, url, content
-    except Exception as e:
-        print(f"❌ News fetch error: {e}"); return None, None, None
+            youtube = build('youtube', 'v3', developerKey=cfg.youtube_api_key)
+            needed = cfg.youtube_videos_to_fetch - len(downloaded_clips)
+            search_response = youtube.search().list(q=q, part='snippet', maxResults=needed*2+3, type='video', videoDuration='short', videoLicense='creativeCommon').execute()
+            video_ids = [item['id']['videoId'] for item in search_response.get('items', [])]
+            if not video_ids: continue
+            for video_id in video_ids:
+                if len(downloaded_clips) >= cfg.youtube_videos_to_fetch: break
+                if video_id in processed_ids: continue
+                processed_ids.add(video_id)
+                clip_path = cfg.video_clip_dir / f"yt_clip_{len(downloaded_clips)}.mp4"
+                try:
+                    ydl_opts = {'format': 'b[ext=mp4]','outtmpl': str(clip_path),'quiet': True,'no_warnings': True,'ignoreerrors': True, 'postprocessor_args': {'ffmpeg': ['-ss', '00:00:15.00', '-t', str(cfg.video_clip_duration), '-an']}}
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+                    if clip_path.exists(): downloaded_clips.append(str(clip_path))
+                except Exception: continue
+        except HttpError as e:
+            if 'quotaExceeded' in str(e): print("      - ❌ YouTube API daily quota exceeded."); break
+            else: continue
+        except Exception: continue
+    print(f"    - Downloaded {len(downloaded_clips)} clips from YouTube.")
+    return downloaded_clips
 
-def search_images(query):
-    API_KEY = os.getenv("GCP_API_KEY"); CSE_ID = os.getenv("GSEARCH_CSE_ID")
+def search_and_download_pexels_videos(query: str, cfg: Config) -> list[str]:
+    if not cfg.pexels_api_key: return []
+    print(f"    - Searching Pexels for {cfg.pexels_videos_to_fetch} clips...")
+    keywords = extract_keywords(query)
+    search_queries = [query, keywords]
+    downloaded_clips, processed_ids = [], set()
+    for q in search_queries:
+        if len(downloaded_clips) >= cfg.pexels_videos_to_fetch: break
+        try:
+            headers = {"Authorization": cfg.pexels_api_key}
+            params = {"query": q, "per_page": (cfg.pexels_videos_to_fetch-len(downloaded_clips))*2+3, "orientation": "landscape"}
+            res = requests.get("https://api.pexels.com/videos/search", headers=headers, params=params, timeout=15); res.raise_for_status()
+            videos = res.json().get("videos", [])
+            if not videos: continue
+            for video in videos:
+                if len(downloaded_clips) >= cfg.pexels_videos_to_fetch: break
+                if video.get('id') in processed_ids: continue
+                processed_ids.add(video.get('id'))
+                video_link = next((f['link'] for f in video.get('video_files', []) if f.get('quality') == 'hd'), None)
+                if not video_link: continue
+                clip_path = cfg.video_clip_dir / f"px_clip_{video.get('id')}.mp4"
+                r_dl = requests.get(video_link, timeout=45, headers={"User-Agent": "Mozilla/5.0"}); r_dl.raise_for_status()
+                clip_path.write_bytes(r_dl.content)
+                if clip_path.exists(): downloaded_clips.append(str(clip_path))
+        except Exception: continue
+    print(f"    - Downloaded {len(downloaded_clips)} clips from Pexels.")
+    return downloaded_clips
+
+# --- REWRITTEN: Final, simplest subtitle generation logic ---
+def generate_audio_and_subs(text: str, cfg: Config) -> float | None:
+    """Generates voiceover and subtitles using the simplest reliable timing method."""
+    print("🎤 Generating voiceover...")
     try:
-        res = requests.get("https://www.googleapis.com/customsearch/v1", params={"key": API_KEY, "cx": CSE_ID, "q": query, "searchType": "image", "num": IMAGE_COUNT}, timeout=10)
-        res.raise_for_status()
-        items = res.json().get("items", [])
-        return [item["link"] for item in items if not any(d in item["link"] for d in SKIP_DOMAINS)]
-    except Exception as e:
-        print(f"❌ Image search failed: {e}"); return []
-
-def download_image(url, path):
-    try:
-        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}, stream=True)
-        r.raise_for_status()
-        content_type = r.headers.get("Content-Type", "");
-        if not content_type.startswith("image"): return None
-        ext = mimetypes.guess_extension(content_type.split(";")[0]) or ".jpg"
-        path = Path(path).with_suffix(ext)
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(1024): f.write(chunk)
-        return path
-    except: return None
-
-def generate_voice(text, out_path):
-    print("🎤 Generating natural voice with Google TTS...")
-    service_account_info = json.loads(os.environ["GCP_SA_KEY"])
-    creds = service_account.Credentials.from_service_account_info(service_account_info)
-    client = texttospeech.TextToSpeechClient(credentials=creds)
-    max_bytes = 4900; chunks = []; current_chunk = ""
-    for paragraph in text.split("\n"):
-        if len(current_chunk.encode("utf-8")) + len(paragraph.encode("utf-8")) < max_bytes:
-            current_chunk += paragraph + "\n"
-        else:
-            chunks.append(current_chunk.strip()); current_chunk = paragraph + "\n"
-    if current_chunk: chunks.append(current_chunk.strip())
-    full_audio = b""
-    for i, chunk in enumerate(chunks):
-        print(f"🧩 Synthesizing chunk {i+1}/{len(chunks)}")
-        synthesis_input = texttospeech.SynthesisInput(text=chunk)
-        voice = texttospeech.VoiceSelectionParams(language_code="en-US", name="en-US-Wavenet-D")
+        selected_voice = random.choice(["en-US-Studio-M", "en-US-Wavenet-J", "en-US-Wavenet-F"])
+        creds = service_account.Credentials.from_service_account_info(json.loads(cfg.gcp_sa_key))
+        client = texttospeech.TextToSpeechClient(credentials=creds)
+        synthesis_input = texttospeech.SynthesisInput(text=text)
+        voice_params = texttospeech.VoiceSelectionParams(language_code="en-US", name=selected_voice)
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
-        response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
-        full_audio += response.audio_content
-    with open(out_path, "wb") as out: out.write(full_audio)
-    print(f"✅ Voiceover saved: {out_path}")
+        response = client.synthesize_speech(input=synthesis_input, voice=voice_params, audio_config=audio_config)
+        cfg.voice_path.write_bytes(response.audio_content)
+        duration = get_media_duration(cfg.voice_path)
+        if not duration: raise ValueError("Audio duration could not be determined.")
+        print(f"✅ Voiceover saved. Duration: {duration:.2f}s")
+    except Exception as e: print(f"❌ Could not generate audio. Error: {e}"); return None
 
-def generate_ass(text, audio_path, ass_path):
-    print("📝 Generating styled subtitles (optimized)...")
-    audio = AudioSegment.from_file(audio_path); duration = len(audio) / 1000.0
-    lines = textwrap.wrap(text, width=70); per_line = duration / len(lines)
-    def fmt_time(seconds):
-        h = int(seconds // 3600); m = int((seconds % 3600) // 60); s = int(seconds % 60)
-        cs = int((seconds - int(seconds)) * 100); return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
-    header = f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,72,&H00FFFF00,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,40,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-    dialogues = "\n".join(f"Dialogue: 0,{fmt_time(i * per_line)},{fmt_time((i + 1) * per_line)},Default,,0,0,0,,{line}" for i, line in enumerate(lines))
-    with open(ass_path, "w") as f: f.write(header + dialogues)
-    print(f"✅ Subtitles created.")
+    print("📝 Generating subtitles using simple, reliable timing...")
+    if duration < 1: return duration
 
-def create_content_video(image_dir, audio_path, output_path, ass_path, video_length, bgm_candidates, metadata):
-    """
-    Creates the main content video with a length determined by the audio narration.
-    This version uses a robust in-memory filter to avoid filesystem errors.
-    """
-    print("🎞 Rendering content video...")
-    images = sorted(Path(image_dir).glob("*"))
-    if not images:
-        print("❌ No images found."); return
+    clean_text = text.replace('\n', ' ').strip()
+    lines = textwrap.wrap(clean_text, width=85, break_long_words=False, replace_whitespace=True)
+    if not lines: return duration
 
-    image_duration = 5
-    num_slides = int(video_length // image_duration) + 1
+    duration_per_line = duration / len(lines)
 
-    # --- DEBUGGING: Print calculated values ---
-    print(f"DEBUG: video_length received by function: {video_length:.2f}s")
-    print(f"DEBUG: num_slides calculated: {num_slides}")
+    def format_time(seconds: float) -> str:
+        """Formats seconds into ASS subtitle format h:mm:ss.cs using datetime."""
+        if seconds < 0: seconds = 0
+        td = datetime.timedelta(seconds=seconds)
+        minutes, sec = divmod(td.seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        centiseconds = td.microseconds // 10000
+        return f"{hours}:{minutes:02d}:{sec:02d}.{centiseconds:02d}"
 
-    looped_images = [images[i % len(images)] for i in range(num_slides)]
+    header = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans,42,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,-1,0,0,0,100,100,0,0,1,2,1,2,40,40,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    ass_data = header
 
-    ffmpeg_cmd = ["ffmpeg", "-y"]
+    current_time = 0.0
+    for line in lines:
+        start_time = current_time
+        end_time = current_time + duration_per_line
+        ass_data += f"Dialogue: 0,{format_time(start_time)},{format_time(end_time)},Default,,0,0,0,,{line}\n"
+        current_time = end_time
 
-    for i, img_path in enumerate(looped_images):
-        ffmpeg_cmd.extend(["-loop", "1", "-t", str(image_duration), "-i", str(img_path)])
+    cfg.ass_path.write_text(ass_data, encoding="utf-8")
+    print("✅ Subtitles created.")
+    return duration
 
-    current_index = len(looped_images)
+def render_video(images: list, videos: list, duration: float, cfg: Config):
+    """Renders the final video with a specific, user-defined asset sequence."""
+    print("🎞️ Rendering final video with specific visual sequence...")
+    if not images and not videos: print("❌ No visual assets available to render."); sys.exit(1)
 
-    voice_input_index = current_index
-    ffmpeg_cmd.extend(["-i", audio_path]); current_index += 1
+    playlist, image_pool = [], list(images)
+    if image_pool: playlist.append({'path': image_pool.pop(0), 'duration': cfg.image_duration, 'is_image': True})
+    if image_pool: playlist.append({'path': image_pool.pop(0), 'duration': cfg.image_duration, 'is_image': True})
 
-    selected_bgm = random.choice(bgm_candidates)
-    bgm_input_index = current_index
-    ffmpeg_cmd.extend(["-i", selected_bgm]); current_index += 1
+    remaining_assets = image_pool + videos
+    random.shuffle(remaining_assets)
+    playlist.extend([{'path': p, 'duration': cfg.image_duration if Path(p).suffix.lower() == '.jpg' else cfg.video_clip_duration, 'is_image': Path(p).suffix.lower() == '.jpg'} for p in remaining_assets])
 
-    gif_input_index = current_index
-    ffmpeg_cmd.extend(["-ignore_loop", "0", "-i", LIKE_FILE]); current_index += 1
+    final_visual_sequence, current_duration = [], 0
+    playlist_cycle = itertools.cycle(playlist)
+    while current_duration < duration:
+        item = next(playlist_cycle)
+        final_visual_sequence.append(item)
+        current_duration += item['duration']
 
-    logo_input_index = current_index
-    ffmpeg_cmd.extend(["-loop", "1", "-i", LOGO_FILE]); current_index += 1
+    print(f"  - Assembled a visual playlist of {len(final_visual_sequence)} items to cover {duration:.2f}s.")
 
+    ffmpeg_cmd = ["ffmpeg", "-y", "-v", "error"]
     filter_chains = []
-    processed_slide_streams = []
 
-    for i in range(num_slides):
-        input_stream = f"[{i}:v]"
-        output_stream_name = f"[v{i}]"
-        scale_pad_filter = f"{input_stream}scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1{output_stream_name}"
-        filter_chains.append(scale_pad_filter)
-        processed_slide_streams.append(output_stream_name)
+    for i, item in enumerate(final_visual_sequence):
+        if item['is_image']:
+            ffmpeg_cmd.extend(["-loop", "1", "-t", str(item['duration']), "-i", item['path']])
+        else:
+            ffmpeg_cmd.extend(["-i", item['path']])
+        filter_chains.append(f"[{i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v{i}]")
 
-    concat_inputs = "".join(processed_slide_streams)
-    filter_chains.append(f"{concat_inputs}concat=n={num_slides}:v=1:a=0[slides_raw]")
-    filter_chains.append(f"[slides_raw]ass='{Path(ass_path).as_posix()}',format=yuv420p[subtitled_slides]")
-    filter_chains.append(f"[{gif_input_index}:v]scale=190:50[gif]")
-    filter_chains.append(f"[{logo_input_index}:v]scale=60:60[logo]")
-    filter_chains.append(f"[subtitled_slides][logo]overlay=10:10[tmp1];[tmp1]drawtext=text='HotWired':fontfile='{FONT_TEXT}':fontcolor=red:fontsize=36:x=75:y=18[tmp2];[tmp2][gif]overlay=W-w-10:10[v]")
-    filter_chains.append(f"[{voice_input_index}:a]volume=1.0[a1];[{bgm_input_index}:a]volume=0.05[a2];[a1][a2]amix=inputs=2:duration=first:normalize=0[aout]")
+    concat_inputs = "".join(f"[v{i}]" for i in range(len(final_visual_sequence)))
+    scaling_chain = ";".join(filter_chains)
+    concat_chain = f"{concat_inputs}concat=n={len(final_visual_sequence)}:v=1:a=0[timeline_v]"
 
-    full_filter_complex = ";".join(filter_chains)
-    ffmpeg_cmd.extend(["-filter_complex", full_filter_complex])
+    audio_idx, bgm_idx, gif_idx, logo_idx = len(final_visual_sequence), len(final_visual_sequence)+1, len(final_visual_sequence)+2, len(final_visual_sequence)+3
+    ffmpeg_cmd.extend(["-i", str(cfg.voice_path), "-i", random.choice(cfg.bgm_files), "-ignore_loop", "0", "-i", str(cfg.like_file), "-loop", "1", "-i", str(cfg.logo_file)])
 
-    # Define a hard limit as a failsafe, slightly longer than the narration
-    hard_limit_duration = str(video_length + 5)
+    overlay_chains = [
+        f"[timeline_v]ass='{cfg.ass_path.as_posix()}'[sub]",
+        f"[{bgm_idx}:a]volume=0.08,afade=t=out:st={duration-3}:d=3[bgm]",
+        f"[{audio_idx}:a][bgm]amix=inputs=2:duration=first:dropout_transition=3[a]",
+        f"[{gif_idx}:v]scale=190:50[gif]", f"[{logo_idx}:v]scale=60:60[logo]",
+        f"[sub][logo]overlay=10:10[ol1]",
+        f"[ol1]drawtext=text='HotWired':fontfile='{cfg.font_text}':fontcolor=red:fontsize=36:x=75:y=18[ol2]",
+        f"[ol2][gif]overlay=W-w-10:10[v]"
+    ]
 
-    ffmpeg_cmd.extend([
-        "-map", "[v]",
-        "-map", "[aout]",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        # FAILSAFE: Use -t to set a hard duration limit for the output
-        "-t", hard_limit_duration,
-        "-shortest",
-        "-movflags", "+faststart",
-        "-metadata", f"title={metadata['title']}",
-        "-metadata", f"description={metadata['description']}",
-        "-metadata", f"comment=Tags: {', '.join(metadata['tags'])}",
-        output_path
-    ])
+    final_filter_complex = ";".join([scaling_chain, concat_chain] + overlay_chains)
+    ffmpeg_cmd.extend(["-filter_complex", final_filter_complex, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-c:a", "aac", "-t", str(duration), "-movflags", "+faststart", str(cfg.final_video_path)])
 
-    # --- DEBUGGING: Print the final command before executing ---
-    print("---")
-    print("DEBUG: Final FFmpeg command to be executed:")
-    # Use shlex.quote for better readability and safety if paths had spaces
-    # For simple printing, ' '.join is fine.
-    print(' '.join(f'"{arg}"' if ' ' in arg else arg for arg in ffmpeg_cmd))
-    print("---")
+    print("  - Executing final render command...")
+    try:
+        subprocess.run(ffmpeg_cmd, check=True)
+        print(f"✅ Final video saved: {cfg.final_video_path}")
+    except subprocess.CalledProcessError:
+        print(f"❌ FFmpeg rendering failed. Full command was: {' '.join(ffmpeg_cmd)}"); sys.exit(1)
 
-    subprocess.run(ffmpeg_cmd, check=True)
-    print(f"✅ Content video saved: {output_path}")
+# --- Main Execution ---
+def main():
+    """Main function to run the single-story video generation workflow."""
+    cfg = Config()
+    cleanup(cfg)
+    cfg.image_dir.mkdir(exist_ok=True)
+    cfg.video_clip_dir.mkdir(exist_ok=True)
+    story_data = get_top_story(cfg)
+    if not story_data: sys.exit(1)
+
+    title, content = story_data
+    images, videos = get_visual_assets(title, cfg)
+    if not images and not videos:
+        print("❌ No visual assets could be found for the story. Exiting."); sys.exit(1)
+
+    intro_line = "Welcome to Hot Wired. In today's top story:"
+    narration_text = f"{intro_line}\n\n{title}.\n\n{content}"
+
+    duration = generate_audio_and_subs(narration_text, cfg)
+    if not duration: sys.exit(1)
+
+    render_video(images, videos, duration, cfg)
+
+    print("\n🎉 Single-story video creation complete!")
 
 if __name__ == "__main__":
-    cleanup()
-    os.makedirs(IMAGE_DIR, exist_ok=True)
-
-    print("📰 Fetching news...")
-    title, url, content = get_latest_news()
-    if not title or not url: print("❌ No news found."); exit()
-
-    metadata = {"title": title, "description": content[:800], "tags": ["news", "USA", "cnn", "trump", "update", "daily"]}
-    with open(METADATA_PATH, "w") as f: json.dump(metadata, f, indent=2)
-    print("✅ Saved video metadata to video_metadata.json")
-
-    print("🔍 Searching for images...")
-    image_urls = search_images(title)
-    if not image_urls: print("❌ Image search failed. Exiting."); exit()
-
-    print("📥 Downloading images...")
-    downloaded = 0
-    for i, img_url in enumerate(image_urls):
-        path = os.path.join(IMAGE_DIR, f"img_{i:03d}")
-        if download_image(img_url, path): downloaded += 1
-    if downloaded == 0: print("❌ No images downloaded, exiting."); exit()
-
-    narration_text = f"Welcome to today's update. Please like, comment, and subscribe. Here's the latest:\n\n{content}"
-    print("🎤 Creating voiceover...")
-    generate_voice(narration_text, VOICE_PATH)
-
-    print("🔎 Analyzing narration audio duration...")
-    narration_duration = get_media_duration(VOICE_PATH)
-    if not narration_duration:
-        print("❌ Could not determine narration duration. Exiting.")
-        exit()
-    print(f"✅ Narration duration is {narration_duration:.2f} seconds.")
-
-    print("📝 Creating subtitles...")
-    generate_ass(narration_text, VOICE_PATH, ASS_PATH)
-
-    create_content_video(
-        image_dir=IMAGE_DIR,
-        audio_path=VOICE_PATH,
-        output_path=VIDEO_PATH,
-        ass_path=ASS_PATH,
-        video_length=narration_duration,
-        bgm_candidates=BGM_FILES,
-        metadata=metadata
-    )
+    main()
