@@ -43,6 +43,7 @@ class Config:
         self.youtube_videos_to_fetch = 3
         self.pexels_videos_to_fetch = 2
         self.video_clip_duration = 10
+        self.METADATA_PATH = "video_metadata.json"
         self.image_duration = 6
         self.font_text = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
         self.bgm_files = ["./assets/bkg1.mp3", "./assets/bkg2.mp3"]
@@ -53,6 +54,8 @@ class Config:
         required = {"GNEWS_KEY": self.gnews_api_key, "GCP_API_KEY": self.google_api_key, "GCP_SA_KEY": self.gcp_sa_key, "GSEARCH_CSE_ID": self.gsearch_cse_id}
         missing = [k for k, v in required.items() if not v]
         if missing: print(f"❌ Critical Error: Missing environment variables: {', '.join(missing)}"); sys.exit(1)
+
+METADATA_PATH = "video_metadata.json"
 
 # --- Utility Functions ---
 def cleanup(cfg: Config):
@@ -339,6 +342,10 @@ def main():
 
     intro_line = "Welcome to Hot Wired. In today's top story:"
     narration_text = f"{intro_line}\n\n{title}.\n\n{content}"
+
+    metadata = {"title": title, "description": content, "tags": ["news", "Usa Today", "update", "daily"]}
+    with open(METADATA_PATH, "w") as f: json.dump(metadata, f, indent=2)
+    print("✅ Saved video metadata to video_metadata.json")
 
     duration = generate_audio_and_subs(narration_text, cfg)
     if not duration: sys.exit(1)
