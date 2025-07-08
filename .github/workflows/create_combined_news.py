@@ -154,26 +154,70 @@ def download_asset(url, save_path):
 
 def search_and_download_videos(query, download_dir, num_clips=1, duration=12):
     print(f"  🎬 Searching for video clips related to '{query}'...")
-    if not YOUTUBE_API_KEY: print("    ⚠️ YOUTUBE_API_KEY not set. Skipping video search."); return []
+    if not YOUTUBE_API_KEY:
+        print("    ⚠️ YOUTUBE_API_KEY not set. Skipping video search.")
+        return []
+
     youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
     try:
-        search_response = youtube.search().list(q=f"{query} news report", part='snippet', maxResults=5, type='video', videoDuration='short').execute()
+        search_response = youtube.search().list(
+            q=f"{query} news report",
+            part='snippet',
+            maxResults=5,
+            type='video',
+            videoDuration='short'
+        ).execute()
         video_ids = [item['id']['videoId'] for item in search_response.get('items', [])]
-        if not video_ids: print("    No relevant video clips found."); return []
+        if not video_ids:
+            print("    ❌ No video results returned from YouTube.")
+            return []
+
         downloaded_clips = []
         for i, video_id in enumerate(video_ids):
-            if len(downloaded_clips) >= num_clips: break
-            video_url, clip_path = f"https://www.youtube.com/watch?v={video_id}", os.path.join(download_dir, f"clip_{query.replace(' ', '_')[:20]}_{i}.mp4")
-            print(f"    📥 Downloading silent clip from {video_url}...")
-            yt_dlp_command = ["yt-dlp", "--quiet", "--no-warnings", "-f", "bestvideo[ext=mp4]/best[ext=mp4]", "--no-audio-multistreams", "--download-sections", f"*0-{duration}", "--force-keyframes-at-cuts", "-o", clip_path, video_url]
-            if os.path.exists(cookies_file_path): yt_dlp_command.extend(["--cookies", cookies_file_path])
-            else: print(f"    ⚠️ Cookies file '{cookies_file_path}' not found. Downloads may fail.")
+            if len(downloaded_clips) >= num_clips:
+                break
+
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            safe_name = re.sub(r'[^\w\d_-]', '', query.lower().replace(' ', '_'))[:20]
+            clip_path = os.path.join(download_dir, f"clip_{safe_name}_{i}.mp4")
+
+            print(f"    📥 Attempting download: {video_url}")
+            yt_dlp_command = [
+                "yt-dlp",
+                "--quiet",
+                "--no-warnings",
+                "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",
+                "--merge-output-format", "mp4",
+                "--download-sections", f"*0-{duration}",
+                "--force-keyframes-at-cuts",
+                "-o", clip_path,
+                video_url
+            ]
+
+            # Optional: Skip cookies even if file exists
+            if os.path.exists(cookies_file_path):
+                print("    🔍 Running without cookies despite cookies.txt existing.")
+
             try:
-                subprocess.run(yt_dlp_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                if os.path.exists(clip_path): downloaded_clips.append(clip_path); print(f"    ✅ Downloaded clip: {clip_path}")
-            except subprocess.CalledProcessError as e: print(f"    ❌ yt-dlp failed for {video_url}.\n       Error: {e.stderr.decode()}");
+                result = subprocess.run(yt_dlp_command, capture_output=True, text=True, check=True)
+                if os.path.exists(clip_path):
+                    downloaded_clips.append(clip_path)
+                    print(f"    ✅ Downloaded clip to: {clip_path}")
+                else:
+                    print(f"    ❌ Downloaded file not found: {clip_path}")
+            except subprocess.CalledProcessError as e:
+                print(f"    ❌ yt-dlp failed to download from {video_url}")
+                print(f"       stderr: {e.stderr.strip()}")
+            except Exception as e:
+                print(f"    ❌ Unexpected error: {e}")
+
+        if not downloaded_clips:
+            print("    ⚠️ No clips were successfully downloaded.")
         return downloaded_clips
-    except Exception as e: print(f"    ❌ An error occurred during YouTube API call: {e}"); return []
+
+    except Exception as e:
+        print(f"    ❌ Error while using YouTube API: {e}")
+        return []
 
 def generate_voice(text, out_path):
     print("🎤 Generating natural voice with Google TTS...")
