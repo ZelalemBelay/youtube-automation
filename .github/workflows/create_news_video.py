@@ -160,28 +160,32 @@ def extract_keywords(title: str) -> str:
 def search_and_download_youtube_videos(query: str, cfg: Config) -> list[str]:
     print(f"    - Searching YouTube (no cookies) for {cfg.youtube_videos_to_fetch} Creative Commons clips...")
     downloaded_clips = []
-    search_query = f'ytsearch{cfg.youtube_videos_to_fetch*2}:"{query} news" cc,short'
+    search_terms = [f'"{query} news"', f'"{query}" footage', f'"{query}" b-roll']
 
-    for i in range(cfg.youtube_videos_to_fetch):
+    for i, term in enumerate(search_terms):
+        if len(downloaded_clips) >= cfg.youtube_videos_to_fetch:
+            break
+
         clip_path = cfg.video_clip_dir / f"yt_clip_{i}.mp4"
-        try:
-            ydl_opts = {
-                'format': 'b[ext=mp4]',
-                'outtmpl': str(clip_path),
-                'quiet': True,
-                'no_warnings': True,
-                'ignoreerrors': True,
-                'postprocessor_args': {
-                    'ffmpeg': ['-ss', '00:00:15.00', '-t', str(cfg.video_clip_duration), '-an']
-                },
-                'noplaylist': True,
-                'extract_flat': False,
-                'default_search': 'ytsearch',
-                'match_filter': yt_dlp.utils.match_filter_func("!is_live"),
-            }
+        search_query = f'ytsearch10:{term}'
 
+        ydl_opts = {
+            'format': 'b[ext=mp4]',
+            'outtmpl': str(clip_path),
+            'quiet': True,
+            'no_warnings': True,
+            'ignoreerrors': True,
+            'noplaylist': True,
+            'default_search': 'ytsearch',
+            'match_filter': yt_dlp.utils.match_filter_func("!is_live"),
+            'postprocessor_args': {
+                'ffmpeg': ['-ss', '00:00:05.00', '-t', str(cfg.video_clip_duration), '-an']
+            },
+        }
+
+        try:
+            print(f"      - Searching and attempting download for clip #{i+1} using query: {search_query}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                print(f"      - Searching and attempting download for clip #{i+1} using query: {search_query}")
                 ydl.download([search_query])
 
             if clip_path.exists():
@@ -189,7 +193,6 @@ def search_and_download_youtube_videos(query: str, cfg: Config) -> list[str]:
                 downloaded_clips.append(str(clip_path))
             else:
                 print(f"      ❌ Clip {i+1} not found at expected path: {clip_path}")
-
         except yt_dlp.utils.DownloadError as e:
             print(f"      ❌ yt_dlp DownloadError for clip #{i+1}: {e}")
         except Exception as e:
