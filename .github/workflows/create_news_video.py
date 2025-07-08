@@ -158,9 +158,12 @@ def extract_keywords(title: str) -> str:
     return " ".join([word for word in words if word not in stop_words and len(word) > 3][:4])
 
 def search_and_download_youtube_videos(query: str, cfg: Config) -> list[str]:
-    print(f"    - Searching YouTube (no cookies) for {cfg.youtube_videos_to_fetch} Creative Commons clips...")
+    print(f"    - Searching YouTube for {cfg.youtube_videos_to_fetch} Creative Commons clips...")
     downloaded_clips = []
     search_terms = [f'"{query} news"', f'"{query}" footage', f'"{query}" b-roll']
+
+    cookies_path = Path("cookies.txt")
+    use_cookies = cookies_path.exists()
 
     for i, term in enumerate(search_terms):
         if len(downloaded_clips) >= cfg.youtube_videos_to_fetch:
@@ -183,6 +186,11 @@ def search_and_download_youtube_videos(query: str, cfg: Config) -> list[str]:
             },
         }
 
+        if use_cookies:
+            ydl_opts['cookies'] = str(cookies_path)
+        else:
+            print(f"      ⚠️ 'cookies.txt' not found. Attempting unauthenticated download (may fail).")
+
         try:
             print(f"      - Searching and attempting download for clip #{i+1} using query: {search_query}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -198,12 +206,15 @@ def search_and_download_youtube_videos(query: str, cfg: Config) -> list[str]:
         except Exception as e:
             print(f"      ❌ Unexpected error while downloading clip #{i+1}: {e}")
 
-    print(f"    - Downloaded {len(downloaded_clips)} clip(s) from YouTube (without cookies).")
+    print(f"    - Downloaded {len(downloaded_clips)} clip(s) from YouTube ({'with' if use_cookies else 'without'} cookies).")
     return downloaded_clips
 
 
 def search_and_download_pexels_videos(query: str, cfg: Config) -> list[str]:
-    if not cfg.pexels_api_key: return []
+    if not cfg.pexels_api_key:
+        print(f"      ⚠️ No PEXELS SECRET")
+        return []
+
     print(f"    - Searching Pexels for {cfg.pexels_videos_to_fetch} clips...")
     keywords = extract_keywords(query)
     search_queries = [query, keywords]

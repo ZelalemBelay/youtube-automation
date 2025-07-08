@@ -72,6 +72,7 @@ jobs:
           GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
           GSEARCH_CSE_ID: ${{ secrets.GSEARCH_CSE_ID }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: |
           python .github/workflows/create_combined_news.py
 
