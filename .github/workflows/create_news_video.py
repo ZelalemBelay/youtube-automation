@@ -9,7 +9,6 @@ import re
 import itertools
 import datetime
 from pathlib import Path
-from pydub import AudioSegment
 from newspaper import Article
 from google.cloud import texttospeech
 from google.oauth2 import service_account
@@ -36,7 +35,7 @@ class Config:
 
         self.image_dir = Path("images")
         self.video_clip_dir = Path("videoclips")
-        self.final_video_path = Path("final_news_video.mp4")
+        self.final_video_path = Path("final_content.mp4")
         self.voice_path = Path("voice.mp3")
         self.ass_path = Path("subtitles.ass")
         self.images_to_fetch = 8
@@ -159,34 +158,46 @@ def extract_keywords(title: str) -> str:
     return " ".join([word for word in words if word not in stop_words and len(word) > 3][:4])
 
 def search_and_download_youtube_videos(query: str, cfg: Config) -> list[str]:
-    print(f"    - Searching YouTube for {cfg.youtube_videos_to_fetch} clips...")
-    keywords = extract_keywords(query)
-    search_queries = [f'"{query}" news report', f'"{keywords}" news footage', f'"{keywords}" B-roll']
-    downloaded_clips, processed_ids = [], set()
-    for q in search_queries:
-        if len(downloaded_clips) >= cfg.youtube_videos_to_fetch: break
+    print(f"    - Searching YouTube (no cookies) for {cfg.youtube_videos_to_fetch} Creative Commons clips...")
+    downloaded_clips = []
+    search_query = f'ytsearch{cfg.youtube_videos_to_fetch*2}:"{query} news" cc,short'
+
+    for i in range(cfg.youtube_videos_to_fetch):
+        clip_path = cfg.video_clip_dir / f"yt_clip_{i}.mp4"
         try:
-            youtube = build('youtube', 'v3', developerKey=cfg.youtube_api_key)
-            needed = cfg.youtube_videos_to_fetch - len(downloaded_clips)
-            search_response = youtube.search().list(q=q, part='snippet', maxResults=needed*2+3, type='video', videoDuration='short', videoLicense='creativeCommon').execute()
-            video_ids = [item['id']['videoId'] for item in search_response.get('items', [])]
-            if not video_ids: continue
-            for video_id in video_ids:
-                if len(downloaded_clips) >= cfg.youtube_videos_to_fetch: break
-                if video_id in processed_ids: continue
-                processed_ids.add(video_id)
-                clip_path = cfg.video_clip_dir / f"yt_clip_{len(downloaded_clips)}.mp4"
-                try:
-                    ydl_opts = {'format': 'b[ext=mp4]','outtmpl': str(clip_path),'quiet': True,'no_warnings': True,'ignoreerrors': True, 'postprocessor_args': {'ffmpeg': ['-ss', '00:00:15.00', '-t', str(cfg.video_clip_duration), '-an']}}
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
-                    if clip_path.exists(): downloaded_clips.append(str(clip_path))
-                except Exception: continue
-        except HttpError as e:
-            if 'quotaExceeded' in str(e): print("      - ❌ YouTube API daily quota exceeded."); break
-            else: continue
-        except Exception: continue
-    print(f"    - Downloaded {len(downloaded_clips)} clips from YouTube.")
+            ydl_opts = {
+                'format': 'b[ext=mp4]',
+                'outtmpl': str(clip_path),
+                'quiet': True,
+                'no_warnings': True,
+                'ignoreerrors': True,
+                'postprocessor_args': {
+                    'ffmpeg': ['-ss', '00:00:15.00', '-t', str(cfg.video_clip_duration), '-an']
+                },
+                'noplaylist': True,
+                'extract_flat': False,
+                'default_search': 'ytsearch',
+                'match_filter': yt_dlp.utils.match_filter_func("!is_live"),
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                print(f"      - Searching and attempting download for clip #{i+1} using query: {search_query}")
+                ydl.download([search_query])
+
+            if clip_path.exists():
+                print(f"      ✅ Successfully downloaded: {clip_path}")
+                downloaded_clips.append(str(clip_path))
+            else:
+                print(f"      ❌ Clip {i+1} not found at expected path: {clip_path}")
+
+        except yt_dlp.utils.DownloadError as e:
+            print(f"      ❌ yt_dlp DownloadError for clip #{i+1}: {e}")
+        except Exception as e:
+            print(f"      ❌ Unexpected error while downloading clip #{i+1}: {e}")
+
+    print(f"    - Downloaded {len(downloaded_clips)} clip(s) from YouTube (without cookies).")
     return downloaded_clips
+
 
 def search_and_download_pexels_videos(query: str, cfg: Config) -> list[str]:
     if not cfg.pexels_api_key: return []
