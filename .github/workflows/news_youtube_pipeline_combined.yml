@@ -4,7 +4,7 @@ on:
   schedule:
     #- cron: '0 14 * * *'  # 9 AM CST (UTC-5)
     #- cron: '0 19 * * *'  # 2 PM CST (UTC-5)
-    - cron: '0 23 * * 6'  # 6 PM CST/CDT
+    - cron: '0 23 * * 0'  # 6 PM CST/CDT Saturday
   workflow_dispatch:
 #  push:
 
